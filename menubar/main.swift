@@ -630,6 +630,21 @@ struct Mirror {
             savedMediaVolume[device.id] = found      // remember the human's level
         }
         setMediaVolume(link.serial, 0)
+        // Volume alone does not settle it: Android appears to restore its own
+        // remembered level as it releases the capture, so setting zero first
+        // only wins part of the gap — quieter, still audible. Pausing is the
+        // deterministic version of the same intent. Nothing playing, nothing to
+        // leak, and the track picks up where it left off.
+        Shell.run(Config.adb, ["-s", link.serial, "shell",
+                               "input keyevent KEYCODE_MEDIA_PAUSE"])
+    }
+
+    /// Undoes `silenceAcrossRestart`, once the new session is actually carrying
+    /// audio — resuming earlier just moves the leak later.
+    static func resumeAfterRestart(_ device: Device) {
+        guard Prefs.streamAudio(device), let link = currentLink(device) else { return }
+        Shell.run(Config.adb, ["-s", link.serial, "shell",
+                               "input keyevent KEYCODE_MEDIA_PLAY"])
     }
 
     /// Stops only this device's mirror, leaving the other one running.
@@ -1677,7 +1692,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Mirror.silenceAcrossRestart(device)
             Mirror.stop(device, restoreVolume: false)
             Shell.pause(2.0)
-            Mirror.start(device, screenOff: keepScreenOff)
+            Mirror.start(device, screenOff: keepScreenOff)   // raises volume once up
+            Mirror.resumeAfterRestart(device)
             Shell.pause(4.0)
             await MainActor.run { [weak self] in self?.clearBusy() }
         }
