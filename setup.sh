@@ -161,16 +161,32 @@ say "Then plug it into this Mac and accept the prompt it shows."
 echo
 
 if yes_no "Ready to add it now?" "Y"; then
-  echo
-  "${HOME}/bin/mirror" add || {
+  # Retried in place rather than treated as a failure. Forgetting to switch USB
+  # debugging on is the single likeliest thing to go wrong here, and it is
+  # fixed in ten seconds on the device — ending the whole wizard over it, after
+  # everything else already succeeded, reads as though the install broke.
+  while :; do
     echo
-    say "That did not complete. Fix whatever it reported, then run: mirror add"
-    exit 1
-  }
-  echo
-  bold "Done."
-  say "Start it from the menu bar icon, or run:  mirror <id>"
-  say "Unplug the cable — it is not needed again."
+    if "${HOME}/bin/mirror" add; then
+      echo
+      bold "Done."
+      say "Start it from the menu bar icon, or run:  mirror <id>"
+      say "Unplug the cable — it is not needed again."
+      break
+    fi
+    echo
+    say "The device was not added. Nine times out of ten that is USB debugging:"
+    say "  Settings -> About phone -> tap \"Build number\" seven times"
+    say "  Settings -> Developer options -> USB debugging -> ON"
+    say "then plug the cable in and accept the prompt on the device."
+    echo
+    if ! yes_no "Try again?" "Y"; then
+      echo
+      bold "Installed, with no device yet."
+      say "Everything else is in place. When the device is ready, run:  mirror add"
+      break
+    fi
+  done
 else
   echo
   bold "Installed."
