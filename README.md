@@ -45,13 +45,21 @@ but be aware I cannot reproduce it, so please include what `mirror <id>` printed
 
 ## Install
 
-You need [Homebrew](https://brew.sh). Everything else the installer checks for.
+You need [Homebrew](https://brew.sh). Everything else is installed for you, after
+being asked.
 
 ```bash
-brew install scrcpy android-platform-tools
+git clone https://github.com/LJ-builds/mirror-kit.git
 cd mirror-kit
-bash install.sh
+bash setup.sh
 ```
+
+That walks through the whole thing: the tools, whether you want this to work on
+your own Wi-Fi or from anywhere via Tailscale, and adding the device. Re-running
+it is safe.
+
+Already set up and just want the latest?  `git pull && bash install.sh` —
+`install.sh` is the plumbing on its own, and it leaves your device list alone.
 
 The menu bar app is compiled on your own machine, which is why there is no
 "unidentified developer" warning to click past — and it is Apple Silicon only.
