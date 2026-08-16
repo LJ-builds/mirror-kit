@@ -11,8 +11,79 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+# ---------- presentation ----------------------------------------------------
+# Colour only when a terminal is actually attached, so piping this to a file or
+# a CI log does not fill it with escape codes.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_OK=$'\033[32m'
+  C_WARN=$'\033[33m'; C_ACCENT=$'\033[36m'; C_OFF=$'\033[0m'
+else
+  C_BOLD=""; C_DIM=""; C_OK=""; C_WARN=""; C_ACCENT=""; C_OFF=""
+fi
+
+TOTAL_STEPS=4
+STEP_N=0
+
+rule() { printf '%s────────────────────────────────────────────────────────%s\n' "${C_DIM}" "${C_OFF}"; }
+
+# "[2/4] Tools" — a person watching a long install wants to know how much of it
+# is left, and which part is currently taking its time.
+step() {
+  STEP_N=$((STEP_N + 1))
+  echo
+  printf '%s[%d/%d]%s %s%s%s\n' \
+    "${C_ACCENT}" "${STEP_N}" "${TOTAL_STEPS}" "${C_OFF}" "${C_BOLD}" "$1" "${C_OFF}"
+  rule
+}
+
+bold() { printf '%s%s%s\n' "${C_BOLD}" "$*" "${C_OFF}"; }
 say()  { printf '  %s\n' "$*"; }
+ok()   { printf '  %s✓%s %s\n' "${C_OK}" "${C_OFF}" "$*"; }
+note() { printf '  %s%s%s\n' "${C_DIM}" "$*" "${C_OFF}"; }
+hmm()  { printf '  %s!%s %s\n' "${C_WARN}" "${C_OFF}" "$*"; }
+
+# The closing frame. Someone who has just watched a wall of install output needs
+# one place that says what they now have and what to do with it.
+summary() {
+  echo
+  rule
+  printf '  %s%s%s\n' "${C_OK}${C_BOLD}" "$1" "${C_OFF}"
+  rule
+  note "  mirror        ~/bin/mirror"
+  note "  menu bar app  /Applications/Android Mirror.app  (starts at login)"
+  note "  your devices  ~/.config/mirror/devices.json"
+  echo
+}
+
+# Runs a slow command with a spinner instead of dead silence. Its output is kept
+# and only shown if it fails — a successful `brew install` scrolling hundreds of
+# lines past is noise, but a failed one is the only thing worth reading.
+run_quietly() {
+  local label="$1"; shift
+  local log; log="$(mktemp)"
+  if [ ! -t 1 ]; then
+    printf '  %s… ' "${label}"
+    if "$@" >"${log}" 2>&1; then echo "done"; rm -f "${log}"; return 0; fi
+    echo "failed"; cat "${log}" >&2; rm -f "${log}"; return 1
+  fi
+  "$@" >"${log}" 2>&1 &
+  local pid=$! i=0
+  local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  while kill -0 "${pid}" 2>/dev/null; do
+    i=$(( (i + 1) % 10 ))
+    printf '\r  %s%s%s %s' "${C_ACCENT}" "${frames:$i:1}" "${C_OFF}" "${label}"
+    sleep 0.1
+  done
+  if wait "${pid}"; then
+    printf '\r  %s✓%s %s\n' "${C_OK}" "${C_OFF}" "${label}"
+    rm -f "${log}"
+    return 0
+  fi
+  printf '\r  %s✗%s %s\n' "${C_WARN}" "${C_OFF}" "${label}"
+  sed 's/^/    /' "${log}" >&2
+  rm -f "${log}"
+  return 1
+}
 ask()  { # ask "question" "default"  -> echoes the answer
   # Reads the terminal directly so prompts still work when this script's stdin
   # is a pipe — but falls back to stdin when there is no terminal at all, so a
@@ -44,7 +115,7 @@ say "This will ask before installing or changing anything."
 echo
 
 # ---------- 1. Homebrew and the two tools ----------------------------------
-bold "1. Tools"
+step "Tools"
 
 if ! command -v brew >/dev/null 2>&1; then
   say "Homebrew is not installed, and it is how scrcpy and adb get here."
@@ -74,15 +145,18 @@ if ! command -v swiftc >/dev/null 2>&1; then
 fi
 
 if [ "${#need[@]}" -eq 0 ]; then
-  say "scrcpy and adb are already here. ✓"
+  ok "scrcpy and adb are already here"
 else
   say "Missing: ${need[*]}"
   say "scrcpy does the mirroring; adb is how a Mac talks to an Android device."
   if yes_no "Install them with Homebrew now?" "Y"; then
     for pkg in "${need[@]}"; do
       case "${pkg}" in
-        android-platform-tools) brew install --cask android-platform-tools ;;
-        *) brew install "${pkg}" ;;
+        android-platform-tools)
+          run_quietly "Installing ${pkg} (a minute or so)" \
+            brew install --cask android-platform-tools ;;
+        *)
+          run_quietly "Installing ${pkg} (a minute or so)" brew install "${pkg}" ;;
       esac
     done
   else
@@ -95,7 +169,7 @@ echo
 # ---------- 2. how the Mac will reach the device ---------------------------
 # The only decision with consequences. Both work; they differ in where you can
 # be standing when they do.
-bold "2. How should this Mac reach your device?"
+step "How this Mac reaches your device"
 echo
 say "a) Same Wi-Fi only — nothing else to install. Works while both are on your"
 say "   home network. If you leave the house, the mirror stops."
@@ -133,7 +207,7 @@ if [ "${USE_TS}" = "1" ]; then
     say "Tailscale is installed but not connected. Sign in, then run this again."
     exit 1
   fi
-  say "This Mac is on Tailscale as ${ts_ip}. ✓"
+  ok "This Mac is on Tailscale as ${ts_ip}"
   say "Make sure the Android device has Tailscale too, signed into the same"
   say "account — you will be asked for its 100.x address in a moment."
 else
@@ -143,14 +217,17 @@ fi
 echo
 
 # ---------- 3. install ------------------------------------------------------
-bold "3. Installing"
-bash "${HERE}/install.sh"
+step "Installing"
+# install.sh narrates its own steps; compiling is the slow one, so it goes
+# behind the spinner rather than sitting silent for half a minute.
+run_quietly "Building and installing (compiles the app locally)" \
+  bash "${HERE}/install.sh"
 echo
 
 # ---------- 4. the device ---------------------------------------------------
 # Left until last because it needs a cable and some tapping on the device, and
 # there is no point asking for that if a step above was going to fail.
-bold "4. Your device"
+step "Your device"
 echo
 say "The device is added over a USB cable once; after that it is wireless."
 echo
@@ -168,10 +245,10 @@ if yes_no "Ready to add it now?" "Y"; then
   while :; do
     echo
     if "${HOME}/bin/mirror" add; then
-      echo
-      bold "Done."
-      say "Start it from the menu bar icon, or run:  mirror <id>"
-      say "Unplug the cable — it is not needed again."
+      summary "Ready"
+      say "Look for the phone icon in your menu bar — that is the app."
+      say "Or from a terminal:  mirror <id>"
+      say "The cable has done its job; unplug it."
       break
     fi
     echo
@@ -181,15 +258,13 @@ if yes_no "Ready to add it now?" "Y"; then
     say "then plug the cable in and accept the prompt on the device."
     echo
     if ! yes_no "Try again?" "Y"; then
-      echo
-      bold "Installed, with no device yet."
-      say "Everything else is in place. When the device is ready, run:  mirror add"
+      summary "Installed — no device yet"
+      say "Everything else is in place. When the device is ready:  mirror add"
       break
     fi
   done
 else
-  echo
-  bold "Installed."
+  summary "Installed"
   say "When you are ready, plug the device in and run:  mirror add"
 fi
 echo

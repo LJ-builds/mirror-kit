@@ -45,8 +45,24 @@ but be aware I cannot reproduce it, so please include what `mirror <id>` printed
 
 ## Install
 
-You need [Homebrew](https://brew.sh). Everything else is installed for you, after
-being asked.
+Installing is done in a terminal, and the setup script asks the questions rather
+than leaving you to read documentation first. A proper welcome window is what I
+would like to build next; until then this is the way in, and it walks you
+through it.
+
+### Before you start
+
+- **A Mac with Apple Silicon.** The `mirror` command works on Intel; the menu bar
+  app is not built there.
+- **[Homebrew](https://brew.sh).** If `brew --version` says "command not found",
+  install it first and follow the two lines it prints at the end about adding it
+  to your PATH — skipping those is why `brew` still seems missing afterwards.
+- **An Android device**, 8.0 or newer, and a USB cable for the first minute.
+
+Everything else — scrcpy, adb, the Xcode command line tools — the script offers
+to install for you.
+
+### 1. Get the code and run the setup
 
 ```bash
 git clone https://github.com/LJ-builds/mirror-kit.git
@@ -54,30 +70,75 @@ cd mirror-kit
 bash setup.sh
 ```
 
-That walks through the whole thing: the tools, whether you want this to work on
-your own Wi-Fi or from anywhere via Tailscale, and adding the device. Re-running
-it is safe.
+It runs in four steps and tells you which one it is on.
 
-Already set up and just want the latest?  `git pull && bash install.sh` —
-`install.sh` is the plumbing on its own, and it leaves your device list alone.
+1. **Tools** — checks for scrcpy, adb and the Swift compiler, and offers to
+   install whatever is missing. If it installs Apple's command line tools, finish
+   Apple's own installer window and then run `bash setup.sh` again.
+2. **How this Mac reaches your device** — the one decision worth making. Answer
+   `a` for same-Wi-Fi-only, or `b` to use [Tailscale](https://tailscale.com) so it
+   also works when you are not home. You can change your mind later by editing one
+   address in the config.
+3. **Installing** — compiles the menu bar app on your machine and sets it to start
+   at login.
+4. **Your device** — the part that needs the cable, below.
 
-The menu bar app is compiled on your own machine, which is why there is no
-"unidentified developer" warning to click past — and it is Apple Silicon only.
-The `mirror` command works regardless.
+### 2. Turn on USB debugging
 
-Then add your device — plug it into the Mac with a USB cable first:
+On the device, once:
+
+- **Settings → About phone →** tap **Build number** seven times. It will tell you
+  you are now a developer.
+- **Settings → Developer options → USB debugging → on.**
+
+Then plug the device into the Mac and accept the **Allow USB debugging?** prompt
+that appears on its screen.
+
+Forgetting this is the single most common reason setup does not finish. If it
+happens, the script says so and offers to try again — nothing is lost.
+
+### 3. Add the device
+
+The setup script does this for you at the end. To do it later, or to add another
+device:
 
 ```bash
 mirror add
 ```
 
-That reads the device's own address off the cable, switches it to wireless
-debugging, and writes it down. Unplug the cable and you are done:
+It reads the device's own address off the cable, switches it to wireless
+debugging, and writes it down. Then unplug the cable — it is not needed again.
+
+### That's it
 
 ```bash
 mirror list          # what's configured
 mirror <id>          # mirror it
 ```
+
+Or use the phone icon that has appeared in your menu bar.
+
+### Updating
+
+```bash
+git pull && bash install.sh
+```
+
+`install.sh` is the same work without the questions, and it leaves your device
+list alone.
+
+### If something goes wrong
+
+- **`command not found: brew`** — Homebrew is not installed, or not on your PATH.
+  See "Before you start".
+- **`command not found: mirror`** — `~/bin` is not on your PATH. Add
+  `export PATH="$HOME/bin:$PATH"` to `~/.zshrc`, open a new terminal, or just use
+  the menu bar app.
+- **No menu bar icon** — the Swift compiler was missing when you installed. Run
+  `xcode-select --install`, then `bash install.sh` again.
+- **Anything else** — `~/Library/Logs/mirror-menubar.log` has the details, and
+  [an issue](https://github.com/LJ-builds/mirror-kit/issues) with that in it is
+  genuinely useful.
 
 If the device refuses to talk over USB, you need Developer options on it:
 **Settings → About phone → tap "Build number" seven times**, then
