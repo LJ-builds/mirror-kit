@@ -606,15 +606,34 @@ struct Mirror {
         if Prefs.streamAudio(device) {
             Shell.pause(3.0)
             if let found = mediaVolume(link.serial), found < maxMediaVolume {
-                savedMediaVolume[device.id] = found
+                // Never overwrite a level already put aside: across a restart the
+                // volume we find is the zero this app just set, and saving that
+                // would hand the device back permanently muted.
+                if savedMediaVolume[device.id] == nil {
+                    savedMediaVolume[device.id] = found
+                }
                 setMediaVolume(link.serial, maxMediaVolume)
                 Shell.log("\(device.id) media volume \(found) → \(maxMediaVolume) for capture gain")
             }
         }
     }
 
+    /// Silences the device across a restart. Changing quality means relaunching
+    /// scrcpy, and the moment its audio process dies Android hands playback back
+    /// to the phone's own speaker — so the two seconds between sessions come out
+    /// loud, in whatever room the phone is in, at the volume this app raised for
+    /// capture. Dropping it to zero for the gap makes the switch silent.
+    static func silenceAcrossRestart(_ device: Device) {
+        guard Prefs.streamAudio(device), let link = currentLink(device) else { return }
+        if savedMediaVolume[device.id] == nil,
+           let found = mediaVolume(link.serial), found < maxMediaVolume {
+            savedMediaVolume[device.id] = found      // remember the human's level
+        }
+        setMediaVolume(link.serial, 0)
+    }
+
     /// Stops only this device's mirror, leaving the other one running.
-    static func stop(_ device: Device) {
+    static func stop(_ device: Device, restoreVolume: Bool = true) {
         for serial in knownSerials(device) {
             // Scoped to the mirror so a keyboard-only session survives. Plain
             // SIGTERM, never -9: a SIGKILLed scrcpy can leave a pointer stuck
@@ -623,7 +642,7 @@ struct Mirror {
         }
         // Hand the device back in a normal state for hand-held use.
         if Prefs.forceLandscape(device) { setLandscape(device, false) }
-        if let level = savedMediaVolume.removeValue(forKey: device.id),
+        if restoreVolume, let level = savedMediaVolume.removeValue(forKey: device.id),
            let link = currentLink(device) {
             setMediaVolume(link.serial, level)
             Shell.log("\(device.id) media volume restored to \(level)")
@@ -1655,7 +1674,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setBusy("Restarting…")
         let keepScreenOff = lastScreenOff[device.id] ?? false
         Task.detached {
-            Mirror.stop(device)
+            Mirror.silenceAcrossRestart(device)
+            Mirror.stop(device, restoreVolume: false)
             Shell.pause(2.0)
             Mirror.start(device, screenOff: keepScreenOff)
             Shell.pause(4.0)
