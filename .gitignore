@@ -1,0 +1,8 @@
+# Build output — install.sh compiles on the user's own machine.
+menubar/mirror-menubar
+*.o
+
+# Never commit a real device list: it holds tailnet addresses.
+devices.json
+
+.DS_Store

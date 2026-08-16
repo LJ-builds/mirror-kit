@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "Copy to ~/.config/mirror/devices.json, or let `mirror add` write it for you.",
+    "Only id, name and title are required. Everything else has a working default.",
+    "",
+    "host   — how to reach the device when it is not plugged in over USB.",
+    "         A LAN address (192.168.x.x) or a Tailscale one (100.x.y.z) both work;",
+    "         `mirror add` fills this in for you from a USB-connected device.",
+    "         Leave it out entirely for a USB-only device.",
+    "kind   — phone | tablet. Picks the menu bar icon and decides whether the",
+    "         'Force landscape' option is offered (tablets only).",
+    "usbModelPrefixes — matched against `adb shell getprop ro.product.model` so a",
+    "         device is still recognised when it appears as a bare USB serial.",
+    "         Needed only if you mirror more than one device over USB.",
+    "screenOffBreaksCapture — set true if scrcpy's --turn-screen-off gives you a",
+    "         black mirror on this device (true on the Galaxy Z Fold 8/Android 17).",
+    "pushTarget — where files dragged onto the mirror window land. Defaults to",
+    "         /sdcard/Download/FromMac/ so they stay separate from whatever the",
+    "         device downloaded itself. Dropping an APK installs it instead.",
+    "virtualDisplay — size/dpi for `mirror <id> big`, which mirrors a separate",
+    "         virtual screen instead of the real one. Use the panel's own",
+    "         resolution, e.g. 2448x1848/420. Omit if you do not want the mode.",
+    "unlockStyle — samsung | generic | none. 'samsung' enables the One UI keyguard",
+    "         handling (PIN bouncer detection, the accidental-switch-on guard).",
+    "         'none' never touches the lock screen."
+  ],
+
+  "devices": [
+    {
+      "id": "phone",
+      "name": "My Android Phone",
+      "host": "192.168.1.50",
+      "port": 5555,
+      "title": "Phone",
+      "kind": "phone",
+      "usbModelPrefixes": [],
+      "screenOffBreaksCapture": false,
+      "unlockStyle": "generic"
+    },
+    {
+      "id": "tablet",
+      "name": "My Android Tablet",
+      "host": "192.168.1.51",
+      "port": 5555,
+      "title": "Tablet",
+      "kind": "tablet",
+      "usbModelPrefixes": [],
+      "screenOffBreaksCapture": false,
+      "unlockStyle": "none"
+    }
+  ],
+
+  "notify": {
+    "_comment": [
+      "Optional. Wires the '声音回手机 / Sound back to phone' button into a push",
+      "notification when audio starts streaming. Needs the actions-server and",
+      "notify services from this same repo, reachable over Tailscale.",
+      "Delete this whole block if you do not run them — everything else still",
+      "works, and `mirror hush` on the Mac always works regardless."
+    ],
+    "enabled": false,
+    "actionsConfig": "~/Android App/actions-server/config.json",
+    "publicBase": "https://your-mac.your-tailnet.ts.net",
+    "notifyUrl": "http://127.0.0.1:2586",
+    "topic": "mac"
+  }
+}

@@ -1,0 +1,636 @@
+#!/usr/bin/env bash
+# mirror — put an Android device's screen on this Mac, over USB, LAN or Tailscale.
+#
+# Everything device-specific lives in ~/.config/mirror/devices.json, so adding a
+# phone is editing config (or running `mirror add`), never editing this file.
+#
+# Usage: mirror <device> [mode...] [extra scrcpy args...]
+#        mirror list | add | hush | help
+#
+# Modes (they compose):
+#   <device>              mirror the physical screen; unlocks first if needed
+#   <device> sound        ...plus the device's audio on the Mac
+#   <device> music        audio ONLY — no window, no unlock, device stays locked
+#                         in your pocket. Ctrl-C to stop
+#   <device> watch        mirror + sound, buffered like a console stream (~500ms
+#                         both ways) so jitter is absorbed. Good for watching,
+#                         bad for clicking
+#   <device> keys         input ONLY — the Mac keyboard and trackpad attach as a
+#                         real USB keyboard/mouse (UHID), so the device's own IME
+#                         handles Chinese. A placeholder window must stay focused
+#   <device> big          mirror a separate virtual display instead of the real
+#                         screen; works while the device is folded shut or locked
+#                         and does not disturb what is on it. Needs
+#                         "virtualDisplay" set for the device
+#   <device> hush         stop only the audio stream of a running session — the
+#                         sound returns to the device, the mirror keeps running
+#
+# Audio always runs as its own scrcpy process, which is what makes `hush`
+# possible: killing it releases Android's playback capture without touching the
+# video stream or the adb connection.
+set -euo pipefail
+
+CONFIG="${MIRROR_CONFIG:-$HOME/.config/mirror/devices.json}"
+# NOT $TMPDIR: macOS gives every process tree its own, and a LaunchAgent's
+# differs from a shell's — so the actions-server could never find the pidfile
+# that the phone's "sound back" button needs. This path is the same either way.
+STATE_DIR="${MIRROR_STATE_DIR:-$HOME/.cache/mirror}"
+
+# ---------- external tools -------------------------------------------------
+# Found on PATH first so an Android SDK install, MacPorts or a non-standard brew
+# prefix all work; the usual locations are only a fallback.
+find_tool() {
+  local name="$1" found
+  found="$(command -v "$name" 2>/dev/null || true)"
+  if [ -z "${found}" ]; then
+    local candidate
+    for candidate in \
+      "/opt/homebrew/bin/${name}" \
+      "/usr/local/bin/${name}" \
+      "${HOME}/Library/Android/sdk/platform-tools/${name}" \
+      "/opt/local/bin/${name}"
+    do
+      [ -x "${candidate}" ] && { found="${candidate}"; break; }
+    done
+  fi
+  if [ -z "${found}" ]; then
+    echo "❌ '${name}' not found. Install it with: brew install ${2:-$name}" >&2
+    exit 1
+  fi
+  printf '%s' "${found}"
+}
+
+ADB="${ADB:-}"
+SCRCPY="${SCRCPY:-}"
+
+# ---------- config ---------------------------------------------------------
+config_missing() {
+  cat >&2 <<EOF
+No device config at ${CONFIG}.
+
+Run 'mirror add' with the device plugged in over USB and it will write one for
+you, or copy devices.example.json there and edit it by hand.
+EOF
+  exit 1
+}
+
+# Emit the device's fields as shell assignments. Doing the JSON in python keeps
+# this script free of a jq dependency, and shlex.quote makes the eval safe for
+# any value a config file can hold.
+load_device() {
+  local want="$1" out
+  out="$(CONFIG_PATH="${CONFIG}" WANT="${want}" python3 <<'PY'
+import json, os, shlex, sys
+
+path = os.path.expanduser(os.environ["CONFIG_PATH"])
+want = os.environ["WANT"]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    sys.exit(3)
+except ValueError as e:
+    print(f"echo '❌ {path} is not valid JSON: {e}' >&2; exit 1")
+    sys.exit(0)
+
+devices = cfg.get("devices") or []
+match = next((d for d in devices if d.get("id") == want), None)
+if match is None:
+    ids = " ".join(d.get("id", "?") for d in devices) or "(none configured)"
+    print(f"echo '❌ No device with id \"{want}\". Configured: {ids}' >&2; exit 1")
+    sys.exit(0)
+
+
+def put(name, value):
+    print(f"{name}={shlex.quote(str(value))}")
+
+
+put("DEV_ID", match.get("id", want))
+put("DEV_NAME", match.get("name", want))
+put("DEV_HOST", match.get("host", ""))
+put("DEV_PORT", match.get("port", 5555))
+put("DEV_TITLE", match.get("title") or match.get("name", want))
+put("DEV_KIND", match.get("kind", "phone"))
+put("DEV_VDISPLAY", match.get("virtualDisplay", ""))
+put("DEV_UNLOCK", match.get("unlockStyle", "generic"))
+put("DEV_SCREEN_OFF_BREAKS", "1" if match.get("screenOffBreaksCapture") else "")
+put("DEV_MAXSIZE", match.get("maxSize", 1600))
+# Files dragged onto the mirror window land here. scrcpy's own default is the
+# device's Downloads folder, which is quickly indistinguishable from everything
+# the device downloaded itself, so they get their own subfolder.
+put("DEV_PUSH", match.get("pushTarget", "/sdcard/Download/FromMac/"))
+
+notify = cfg.get("notify") or {}
+put("NOTIFY_ENABLED", "1" if notify.get("enabled") else "")
+put("NOTIFY_ACTIONS_CONFIG", os.path.expanduser(notify.get("actionsConfig", "")))
+put("NOTIFY_PUBLIC_BASE", notify.get("publicBase", ""))
+put("NOTIFY_URL", notify.get("notifyUrl", "http://127.0.0.1:2586"))
+put("NOTIFY_TOPIC", notify.get("topic", "mac"))
+PY
+)" || { [ "$?" = "3" ] && config_missing; }
+  eval "${out}"
+}
+
+list_devices() {
+  # `set -e` would abort on python's exit 3 before the check below, so the
+  # status has to be captured rather than inspected after the fact.
+  local status=0
+  CONFIG_PATH="${CONFIG}" python3 <<'PY' || status=$?
+import json, os, sys
+
+path = os.path.expanduser(os.environ["CONFIG_PATH"])
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    sys.exit(3)
+except ValueError as e:
+    sys.exit(f"❌ {path} is not valid JSON: {e}")
+
+devices = cfg.get("devices") or []
+if not devices:
+    print("No devices configured yet. Run 'mirror add'.")
+    sys.exit(0)
+
+print(f"{'ID':<10} {'NAME':<26} WHERE")
+for d in devices:
+    host = d.get("host")
+    where = f"{host}:{d.get('port', 5555)}" if host else "USB only"
+    print(f"{d.get('id','?'):<10} {d.get('name','?'):<26} {where}")
+PY
+  [ "${status}" = "3" ] && config_missing
+  return 0
+}
+
+# ---------- audio ("hush") -------------------------------------------------
+# The audio stream is a scrcpy process of its own, and its pid lives here so it
+# can be stopped without disturbing the video mirror. One file per device, so
+# two mirrors do not fight over it.
+audio_pidfile() {
+  mkdir -p "${STATE_DIR}"
+  printf '%s/scrcpy-%s-audio.pid' "${STATE_DIR}" "$1"
+}
+
+stop_audio() {
+  local pidfile pid
+  pidfile="$(audio_pidfile "$1")"
+  pid="$(cat "${pidfile}" 2>/dev/null || true)"
+  rm -f "${pidfile}"
+  if [ -n "${pid}" ] && ps -p "${pid}" -o command= 2>/dev/null | grep -q scrcpy; then
+    kill "${pid}" 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
+# Push a notification carrying a button that stops the audio stream, so the
+# sound can be reclaimed from the phone itself. Entirely optional: without the
+# actions-server this silently does nothing and `mirror hush` still works.
+notify_hush_button() {
+  [ -n "${NOTIFY_ENABLED}" ] || return 0
+  [ -n "${NOTIFY_PUBLIC_BASE}" ] || return 0
+  [ -f "${NOTIFY_ACTIONS_CONFIG}" ] || return 0
+  ACT_CONFIG="${NOTIFY_ACTIONS_CONFIG}" PUBLIC_BASE="${NOTIFY_PUBLIC_BASE}" \
+  NOTIFY_ENDPOINT="${NOTIFY_URL}" TOPIC="${NOTIFY_TOPIC}" DEVICE="${DEV_ID}" \
+  python3 <<'PY' 2>/dev/null || true
+import json, os, urllib.request
+
+with open(os.environ["ACT_CONFIG"]) as f:
+    token = json.load(f)["token"]
+
+payload = {
+    "topic": os.environ["TOPIC"],
+    "title": "🔊 设备声音正在传到 Mac",
+    "message": "点按钮让声音立刻回到设备;镜像和连接不受影响。",
+    "tags": ["sound"],
+    "actions": [{
+        "action": "http", "label": "声音回设备",
+        "url": f"{os.environ['PUBLIC_BASE']}/act/hush?device={os.environ['DEVICE']}",
+        "method": "POST",
+        "headers": {"X-Token": token},
+    }],
+}
+req = urllib.request.Request(os.environ["NOTIFY_ENDPOINT"],
+                             data=json.dumps(payload).encode(),
+                             headers={"Content-Type": "application/json"})
+urllib.request.urlopen(req, timeout=5).close()
+PY
+}
+
+# ---------- adb ------------------------------------------------------------
+ashell() { "${ADB}" -s "${TARGET}" shell "$@"; }
+
+online() {
+  "${ADB}" devices | grep -q "^${TARGET}[[:space:]]*device$"
+}
+
+connect_device() {
+  if [ -z "${DEV_HOST}" ]; then
+    # USB-only device: find it among the plugged-in serials.
+    TARGET="$("${ADB}" devices | awk '$2=="device" && $1 !~ /:/ {print $1; exit}')"
+    if [ -z "${TARGET}" ]; then
+      echo "❌ ${DEV_NAME} has no host configured and nothing is plugged in over USB." >&2
+      exit 1
+    fi
+    echo "Using USB device ${TARGET}."
+    return 0
+  fi
+
+  TARGET="${DEV_HOST}:${DEV_PORT}"
+
+  # adb keeps stale offline entries around; clear them before reconnecting.
+  "${ADB}" disconnect "${TARGET}" >/dev/null 2>&1 || true
+  echo "Connecting to ${TARGET} ..."
+  "${ADB}" connect "${TARGET}" >/dev/null 2>&1 || true
+  sleep 1
+  online && return 0
+
+  cat <<EOF
+
+Couldn't reach adb on port ${DEV_PORT}. That normally means the device rebooted,
+which turns Wireless debugging off and drops the pinned port.
+
+On the device: Settings -> Developer options -> Wireless debugging -> ON
+Read the port from "IP address & Port" (the number after the colon).
+
+If it has never been paired with this Mac, first tap
+"Pair device with pairing code" and run, in another terminal:
+  adb pair ${DEV_HOST}:<pairing-port> <6-digit-code>
+
+EOF
+  local tmpport
+  read -r -p "Connect port (blank to abort): " tmpport
+  [ -z "${tmpport}" ] && { echo "Aborted."; exit 1; }
+
+  "${ADB}" connect "${DEV_HOST}:${tmpport}" >/dev/null 2>&1 || true
+  sleep 1
+  if ! "${ADB}" devices | grep -q "^${DEV_HOST}:${tmpport}[[:space:]]*device$"; then
+    echo "Still can't connect. Is the device on the same network (or is Tailscale up on both ends)?" >&2
+    echo "If it asks to re-pair: adb pair ${DEV_HOST}:<pairing-port> <6-digit-code>" >&2
+    exit 1
+  fi
+
+  # Re-pin to the configured port so the next launch needs no prompt.
+  echo "Re-pinning adbd to port ${DEV_PORT} ..."
+  "${ADB}" -s "${DEV_HOST}:${tmpport}" tcpip "${DEV_PORT}" >/dev/null 2>&1 || true
+  sleep 4
+  "${ADB}" disconnect "${DEV_HOST}:${tmpport}" >/dev/null 2>&1 || true
+  "${ADB}" connect "${TARGET}" >/dev/null 2>&1 || true
+  sleep 1
+  online || { echo "Re-pin failed; try again." >&2; exit 1; }
+}
+
+# ---------- lock handling --------------------------------------------------
+locked() {
+  ashell dumpsys deviceidle 2>/dev/null | grep -q 'mScreenLocked=true'
+}
+
+# Samsung's "accidental switch-on" guard: when the proximity sensor is covered
+# (shut in a bag, face down) the device lights up but swallows every input, and
+# the PIN prompt never appears. Retrying cannot help — it has to be uncovered.
+pocket_guarded() {
+  [ "${DEV_UNLOCK}" = "samsung" ] || return 1
+  ashell dumpsys window 2>/dev/null | grep -q 'UnintentionalLcdOn'
+}
+
+WE_UNLOCKED=0
+unlock() {
+  if pocket_guarded; then
+    echo "The device thinks it was switched on by accident (sensor covered)." >&2
+    echo "Pick it up or open it, then try again." >&2
+    return 1
+  fi
+
+  ashell input keyevent KEYCODE_WAKEUP
+  sleep 1
+  ashell wm dismiss-keyguard      # a swipe-only keyguard falls away here
+  sleep 1
+
+  if locked; then
+    if pocket_guarded; then
+      echo "The device thinks it was switched on by accident (sensor covered)." >&2
+      echo "Pick it up or open it, then try again." >&2
+      return 1
+    fi
+    # Wait for the PIN prompt to take focus — typing before it does throws the
+    # digits at whatever window is up and records no failed attempt at all.
+    local waited=0
+    while [ "${waited}" -lt 12 ]; do
+      ashell dumpsys window 2>/dev/null | grep -q 'Bouncer' && break
+      sleep 0.5
+      waited=$((waited + 1))
+    done
+
+    local pin
+    read -rs -p "Device PIN (used once, never stored): " pin </dev/tty
+    echo >&2
+    [ -z "${pin}" ] && { echo "No PIN given; can't unlock." >&2; return 1; }
+    # Key events land in the secure field more reliably than 'input text'.
+    local codes="" i=0
+    while [ "${i}" -lt "${#pin}" ]; do
+      codes="${codes} KEYCODE_${pin:$i:1}"
+      i=$((i + 1))
+    done
+    ashell input keyevent ${codes}
+    ashell input keyevent KEYCODE_ENTER
+    sleep 2
+  fi
+
+  if locked; then
+    echo "Unlock failed — the device rejected that PIN. Nothing was stored." >&2
+    return 1
+  fi
+  WE_UNLOCKED=1
+}
+
+# ---------- `mirror add` ---------------------------------------------------
+# The onboarding step that used to be a manual IP hunt. With the device plugged
+# in over USB, adb can report its own address and switch itself to TCP/IP, so
+# nothing has to be typed in by hand.
+add_device() {
+  ADB="${ADB:-$(find_tool adb android-platform-tools)}"
+
+  echo "Looking for a device plugged in over USB…"
+  local serial
+  serial="$("${ADB}" devices | awk '$2=="device" && $1 !~ /:/ {print $1; exit}')"
+  if [ -z "${serial}" ]; then
+    cat >&2 <<EOF
+❌ No USB device found.
+
+Plug the device in, then on the device:
+  Settings -> About phone -> tap "Build number" 7 times   (enables Developer options)
+  Settings -> Developer options -> USB debugging -> ON
+and accept the "Allow USB debugging?" prompt that appears.
+EOF
+    exit 1
+  fi
+
+  local model manufacturer android_ip
+  model="$("${ADB}" -s "${serial}" shell getprop ro.product.model 2>/dev/null | tr -d '\r\n')"
+  manufacturer="$("${ADB}" -s "${serial}" shell getprop ro.product.manufacturer 2>/dev/null | tr -d '\r\n')"
+  echo "Found: ${manufacturer} ${model} (${serial})"
+
+  echo "Switching it to wireless debugging on port 5555…"
+  "${ADB}" -s "${serial}" tcpip 5555 >/dev/null 2>&1 || true
+  sleep 3
+
+  # Ask the device for its own address rather than making the user find it.
+  android_ip="$("${ADB}" -s "${serial}" shell ip route 2>/dev/null \
+    | awk '/wlan0/ && /src/ {for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' \
+    | head -1 | tr -d '\r\n')"
+
+  echo
+  echo "Wi-Fi address: ${android_ip:-(none found — is Wi-Fi on?)}"
+  echo "If you mirror this device from outside the house over Tailscale, enter its"
+  echo "Tailscale IP (100.x.y.z) instead. Blank keeps the Wi-Fi one."
+  local host
+  read -r -p "Address to use [${android_ip}]: " host
+  host="${host:-${android_ip}}"
+
+  local id name kind
+  read -r -p "Short id (letters/digits, used as 'mirror <id>') [phone]: " id
+  id="${id:-phone}"
+  read -r -p "Display name [${manufacturer} ${model}]: " name
+  name="${name:-${manufacturer} ${model}}"
+  read -r -p "Is it a tablet? [y/N]: " kind
+  case "${kind}" in y|Y|yes|Yes) kind=tablet ;; *) kind=phone ;; esac
+
+  CONFIG_PATH="${CONFIG}" NEW_ID="${id}" NEW_NAME="${name}" NEW_HOST="${host}" \
+  NEW_MODEL="${model}" NEW_KIND="${kind}" NEW_MANUF="${manufacturer}" python3 <<'PY'
+import json, os
+
+path = os.path.expanduser(os.environ["CONFIG_PATH"])
+os.makedirs(os.path.dirname(path), exist_ok=True)
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, ValueError):
+    cfg = {}
+
+devices = cfg.setdefault("devices", [])
+model = os.environ["NEW_MODEL"]
+entry = {
+    "id": os.environ["NEW_ID"],
+    "name": os.environ["NEW_NAME"],
+    "host": os.environ["NEW_HOST"],
+    "port": 5555,
+    "title": os.environ["NEW_NAME"],
+    "kind": os.environ["NEW_KIND"],
+    # Enough of the model string to recognise the device on USB later, without
+    # pinning it to one exact variant.
+    "usbModelPrefixes": [model[:6]] if model else [],
+    "screenOffBreaksCapture": False,
+    # Samsung's keyguard behaves differently enough to be worth special-casing;
+    # everything else gets the generic path.
+    "unlockStyle": ("samsung"
+                    if "samsung" in os.environ["NEW_MANUF"].lower()
+                    else "generic"),
+}
+
+devices[:] = [d for d in devices if d.get("id") != entry["id"]] + [entry]
+cfg.setdefault("notify", {"enabled": False})
+
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+print(f"✅ Saved to {path}")
+PY
+
+  echo
+  echo "Try it now — you can unplug the USB cable first:"
+  echo "  mirror ${id}"
+}
+
+# ---------- argument parsing ----------------------------------------------
+usage() {
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+[ "$#" -gt 0 ] || usage
+
+case "${1}" in
+  -h|--help|help) usage ;;
+  list|ls)        list_devices; exit 0 ;;
+  add)            add_device; exit 0 ;;
+esac
+
+DEVICE_ID="$1"; shift
+load_device "${DEVICE_ID}"
+
+MODE=auto
+AUDIO=off
+WATCH=off
+while :; do
+  case "${1:-}" in
+    big)          MODE=big; shift ;;
+    sound|audio)  AUDIO=on; shift ;;
+    music)        MODE=music; AUDIO=on; shift ;;
+    keys|kbd)     MODE=keys; shift ;;
+    watch)        WATCH=on; AUDIO=on; shift ;;
+    hush|mute)
+      if stop_audio "${DEV_ID}"; then
+        echo "Audio stream stopped — sound is back on ${DEV_NAME}."
+      else
+        echo "No audio stream was running for ${DEV_NAME}."
+      fi
+      exit 0 ;;
+    *) break ;;
+  esac
+done
+
+ADB="${ADB:-$(find_tool adb android-platform-tools)}"
+SCRCPY="${SCRCPY:-$(find_tool scrcpy)}"
+
+MODE_ARGS=()
+case "${MODE}" in
+  big)
+    if [ -z "${DEV_VDISPLAY}" ]; then
+      echo "❌ ${DEV_NAME} has no \"virtualDisplay\" set in ${CONFIG}." >&2
+      echo "   Add e.g. \"virtualDisplay\": \"2448x1848/420\" to use 'big'." >&2
+      exit 1
+    fi
+    DEV_TITLE="${DEV_TITLE} (virtual)"
+    MODE_ARGS=(
+      "--new-display=${DEV_VDISPLAY}"
+      --no-vd-destroy-content   # leave apps running there when the window closes
+    )
+    ;;
+  music)
+    # Audio capture is not behind the keyguard, so this works fully locked.
+    MODE_ARGS=(--no-video --no-window)
+    ;;
+  keys)
+    # No video at all — just UHID, which registers a genuine keyboard and mouse
+    # on the device. Because they are real HID devices, Android hands keystrokes
+    # to the device's own IME, so Chinese input works as with a Bluetooth one.
+    DEV_TITLE="${DEV_TITLE} (keyboard)"
+    MODE_ARGS=(--no-video --keyboard=uhid --mouse=uhid)
+    ;;
+  auto)
+    MODE_ARGS=(-m "${DEV_MAXSIZE}" --stay-awake)
+    ;;
+esac
+
+# The defaults (128K, 50ms of buffer) crackle over Wi-Fi: the link jitters by
+# tens of milliseconds and every underrun is an audible glitch. Buffer is pure
+# latency, so 'music' — where nothing on screen has to stay in sync — can afford
+# a big one. With video, keep it tight enough that lips still match.
+#
+# Video and audio buffers must be the SAME number, or the sound simply arrives
+# late: scrcpy buffers video not at all by default, so pairing that with a 120ms
+# audio buffer is lip-sync error dressed up as responsiveness.
+BUF=0
+[ "${AUDIO}" = "on" ] && BUF=120
+[ "${MODE}" = "music" ] && BUF=200      # nothing on screen to stay level with
+# Half a second is deliberately generous. Nobody is pointing at anything in this
+# mode, so latency costs nothing, and a deep pool rides out the jitter spikes
+# that a shallow one merely postpones.
+[ "${WATCH}" = "on" ] && BUF=500
+
+AUDIO_STREAM_ARGS=()
+if [ "${AUDIO}" = "on" ]; then
+  RATE=192K
+  [ "${MODE}" = "music" ] && RATE=256K
+  # No 'play on both ends' option: two outputs on separate clocks with a network
+  # between them drift audibly apart, which is worse than either one alone.
+  AUDIO_STREAM_ARGS=("--audio-bit-rate=${RATE}" "--audio-buffer=${BUF}")
+fi
+
+# The video process never carries audio; it only buffers video to stay in step
+# with the audio process. In 'music' mode there IS no video process — the main
+# process is the audio stream, so it takes the audio args directly.
+if [ "${MODE}" = "music" ]; then
+  MAIN_ARGS=(${AUDIO_STREAM_ARGS[@]+"${AUDIO_STREAM_ARGS[@]}"})
+else
+  MAIN_ARGS=(--no-audio)
+  [ "${BUF}" -gt 0 ] && MAIN_ARGS+=("--video-buffer=${BUF}")
+fi
+
+# ---------- run ------------------------------------------------------------
+connect_device
+
+if [ "${MODE}" = "auto" ] && [ "${DEV_UNLOCK}" != "none" ] && locked; then
+  echo "${DEV_NAME} is locked — unlocking..."
+  unlock || exit 1
+fi
+
+echo "Connected. Starting mirror..."
+# adb push will not create a missing destination, so a drag & drop into a folder
+# that does not exist yet fails silently.
+ashell mkdir -p "'${DEV_PUSH}'" >/dev/null 2>&1 || true
+"${SCRCPY}" \
+  -s "${TARGET}" \
+  "${MODE_ARGS[@]}" \
+  "${MAIN_ARGS[@]}" \
+  --force-adb-forward \
+  --push-target="${DEV_PUSH}" \
+  --window-title "${DEV_TITLE}" \
+  "$@" &
+SCRCPY_PID=$!
+
+AUDIO_PID=""
+if [ "${AUDIO}" = "on" ]; then
+  if [ "${MODE}" = "music" ]; then
+    AUDIO_PID=${SCRCPY_PID}     # the main process IS the audio stream
+  else
+    "${SCRCPY}" \
+      -s "${TARGET}" \
+      --no-video --no-window \
+      "${AUDIO_STREAM_ARGS[@]}" \
+      --force-adb-forward &
+    AUDIO_PID=$!
+  fi
+  echo "${AUDIO_PID}" > "$(audio_pidfile "${DEV_ID}")"
+  notify_hush_button
+  echo "Audio -> Mac. 'mirror ${DEV_ID} hush' hands it back."
+fi
+
+cleanup() {
+  kill "${SCRCPY_PID}" 2>/dev/null || true
+  [ -n "${AUDIO_PID}" ] && kill "${AUDIO_PID}" 2>/dev/null || true
+  # Only clear the pidfile if it is still ours (hush may already have).
+  local pidfile; pidfile="$(audio_pidfile "${DEV_ID}")"
+  [ "$(cat "${pidfile}" 2>/dev/null)" = "${AUDIO_PID}" ] && rm -f "${pidfile}" || true
+}
+trap cleanup INT TERM
+
+# Keep the device usable if it locks itself mid-session — but at most once per
+# lock, not once every tick.
+#
+# Retrying on a timer is actively harmful. `unlock` wakes the device and pokes
+# the keyguard, so against a lock it cannot clear it just raises the PIN prompt
+# again and again: the phone never gets to sleep, and the mirror keeps going
+# black (the prompt is a secure window, so it captures as black). Worse, those
+# injected events share one virtual input device with scrcpy's own mouse, and
+# interleaving the two makes Android reject the pointer stream outright
+# ("Down time went backwards") — which is felt as the mouse dying mid-session.
+#
+# `locked` is a read-only query, so watching costs the device nothing.
+if [ "${MODE}" = "auto" ] && [ "${DEV_UNLOCK}" != "none" ]; then
+  TRIED_THIS_LOCK=0
+  while kill -0 "${SCRCPY_PID}" 2>/dev/null; do
+    sleep 3
+    kill -0 "${SCRCPY_PID}" 2>/dev/null || break
+    if locked; then
+      if [ "${TRIED_THIS_LOCK}" = "0" ]; then
+        TRIED_THIS_LOCK=1
+        echo "${DEV_NAME} locked itself — trying once to unlock..."
+        unlock || echo "Still locked — unlock ${DEV_NAME} by hand, or restart the mirror."
+      fi
+    else
+      TRIED_THIS_LOCK=0      # unlocked again; the next lock gets a fresh try
+    fi
+  done
+fi
+
+wait "${SCRCPY_PID}" || true
+cleanup     # closing the mirror window also ends the audio stream
+
+# Leave the device as we found it: if we unlocked it, lock it back.
+if [ "${WE_UNLOCKED}" = "1" ]; then
+  echo "Mirror closed — locking ${DEV_NAME}."
+  ashell input keyevent KEYCODE_SLEEP 2>/dev/null || true
+fi
