@@ -19,7 +19,7 @@ APP_DIR="${MIRROR_APP_DIR:-/Applications}"
 APP="$APP_DIR/Android Mirror.app"
 LABEL="com.mirrorkit.menubar"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-SWIFT_SRC="$HERE/menubar/main.swift"
+SWIFT_DIR="$HERE/menubar"
 
 say() { printf '→ %s\n' "$*"; }
 warn() { printf '⚠️  %s\n' "$*" >&2; }
@@ -69,8 +69,8 @@ fi
 # Compiled on this machine on purpose: a locally built binary carries no
 # com.apple.quarantine flag, so Gatekeeper never blocks it and the whole
 # Developer ID / notarization requirement simply does not apply.
-if [ ! -f "$SWIFT_SRC" ]; then
-  warn "Menu bar source not found at $SWIFT_SRC — installing the CLI only."
+if [ ! -d "$SWIFT_DIR" ] || [ -z "$(ls "$SWIFT_DIR"/*.swift 2>/dev/null)" ]; then
+  warn "Menu bar source not found in $SWIFT_DIR — installing the CLI only."
 elif ! command -v swiftc >/dev/null 2>&1; then
   warn "swiftc not found, so the menu bar app was skipped. The CLI works fine."
   warn "To get it: xcode-select --install"
@@ -80,8 +80,11 @@ else
   say "Building the menu bar app…"
   BUILD_TMP="$(mktemp -d)"
   trap 'rm -rf "$BUILD_TMP"' EXIT
+  # Every file in menubar/ — they are one module, so order does not matter and
+  # there are no headers to keep in step. Swift requires the top-level code to
+  # live in a file called main.swift; the rest is named after what it holds.
   swiftc -swift-version 5 -O -target arm64-apple-macos13.0 \
-    "$SWIFT_SRC" -o "$BUILD_TMP/mirror-menubar"
+    "$SWIFT_DIR"/*.swift -o "$BUILD_TMP/mirror-menubar"
 
   rm -rf "$APP"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
