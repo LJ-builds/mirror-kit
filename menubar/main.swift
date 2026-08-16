@@ -9,6 +9,13 @@ import AppKit
 // MARK: - Configuration
 
 enum Config {
+    /// One place to change if the repository is ever renamed or moved. The
+    /// issue tracker is the only support channel this app has, so a wrong URL
+    /// here means bug reports quietly go nowhere.
+    static let projectURL = "https://github.com/LJ-builds/mirror-kit"
+    static let issuesURL = projectURL + "/issues"
+    static let sponsorURL = "https://github.com/sponsors/LJ-builds"
+
     /// Look the tools up rather than hard-coding a Homebrew prefix: an Intel
     /// Mac uses /usr/local, an Android Studio install puts adb under
     /// ~/Library/Android, and MacPorts uses /opt/local. PATH is searched first,
@@ -434,11 +441,22 @@ struct Mirror {
     /// A bare serial (no host:port) is a USB attachment, but with two devices it
     /// no longer identifies *which*, so ask the device what model it is.
     private static func usbSerial(for device: Device) -> String? {
-        let (_, out) = Shell.run(Config.adb, ["devices"])
+        // `adb devices -l`, not `adb devices`: a real USB attachment is the one
+        // carrying a `usb:` field. Inferring it from "the serial has no colon"
+        // is wrong, because wireless debugging advertises itself over mDNS as
+        //   adb-XXXXXXXXXX-YYYYYY._adb-tls-connect._tcp
+        // which has no colon either, and answers to the same model prefix — so
+        // a phone on Wi-Fi got reported as USB and handed the USB bitrate.
+        let (_, out) = Shell.run(Config.adb, ["devices", "-l"])
         for line in out.split(separator: "\n") {
             let parts = line.split(whereSeparator: { $0 == "\t" || $0 == " " })
                             .map(String.init).filter { !$0.isEmpty }
-            guard parts.count >= 2, parts[1] == "device", !parts[0].contains(":") else { continue }
+            guard parts.count >= 2, parts[1] == "device",
+                  parts.contains(where: { $0.hasPrefix("usb:") }),
+                  // Belt and braces: wireless debugging's mDNS name is not a cable
+                  // whatever else the line says.
+                  !parts[0].hasPrefix("adb-"),
+                  !parts[0].contains("_adb-tls-connect") else { continue }
             let serial = parts[0]
             let (_, model) = Shell.run(Config.adb, ["-s", serial, "shell", "getprop ro.product.model"])
             let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1106,6 +1124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(inputMenuItem(device))
 
         menu.addItem(.separator())
+        menu.addItem(aboutMenuItem())
         menu.addItem(item("Open Log", #selector(openLog), ""))
         menu.addItem(item("Quit", #selector(quit), "q"))
     }
@@ -1147,9 +1166,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         sub.addItem(.separator())
 
-        let audio = item("Stream Device Audio", #selector(toggleAudio), "")
+        // Say what turning this on costs. Sound cannot be buffered without the
+        // picture being buffered by the same amount — otherwise it simply plays
+        // late — so enabling audio slows the video down to meet it. That is a
+        // real change in how the mirror feels, and it should not be a surprise.
+        let audio = item("Stream Device Audio  (adds ~0.12s, keeps it in sync)",
+                         #selector(toggleAudio), "")
         audio.state = Prefs.streamAudio(device) ? .on : .off
         sub.addItem(audio)
+        if Prefs.streamAudio(device) && !Prefs.watchMode(device) {
+            let hint = NSMenuItem(
+                title: "    picture is held back to match the sound",
+                action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            sub.addItem(hint)
+        }
 
         let watch = item("Watch Mode — buffered, adds ~0.5s lag",
                          #selector(toggleWatchMode), "")
@@ -1208,6 +1239,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         parent.submenu = sub
         return parent
     }
+
+    /// Kept behind one row on purpose. Reporting a bug is genuinely useful to
+    /// someone mid-problem — this app is only tested on three Samsung devices,
+    /// so other people's reports are the only way anything else gets fixed. But
+    /// a menu is opened to get something done, and putting a donation link in
+    /// the middle of that taxes every visit. One "About" holds both without
+    /// either one standing in the way.
+    private func aboutMenuItem() -> NSMenuItem {
+        let sub = NSMenu()
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                        as? String ?? "?"
+        let stamp = NSMenuItem(title: "Mirror kit \(version)", action: nil, keyEquivalent: "")
+        stamp.isEnabled = false
+        sub.addItem(stamp)
+
+        let scrcpyNote = NSMenuItem(title: "Mirroring by scrcpy", action: nil, keyEquivalent: "")
+        scrcpyNote.isEnabled = false
+        sub.addItem(scrcpyNote)
+
+        sub.addItem(.separator())
+
+        let report = item("Report an Issue…", #selector(openIssues), "")
+        sub.addItem(report)
+        let project = item("Project Page", #selector(openProject), "")
+        sub.addItem(project)
+
+        sub.addItem(.separator())
+
+        let sponsor = item("Buy Me a Coffee", #selector(openSponsor), "")
+        sub.addItem(sponsor)
+
+        let parent = NSMenuItem(title: "About Mirror kit", action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        return parent
+    }
+
+    private func open(_ urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func openIssues()  { open(Config.issuesURL) }
+    @objc private func openProject() { open(Config.projectURL) }
+    @objc private func openSponsor() { open(Config.sponsorURL) }
 
     private func item(_ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
         let i = NSMenuItem(title: title, action: action, keyEquivalent: key)

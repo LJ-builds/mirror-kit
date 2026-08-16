@@ -224,10 +224,20 @@ online() {
   "${ADB}" devices | grep -q "^${TARGET}[[:space:]]*device$"
 }
 
+# The serial of a device attached by cable, or nothing. `adb devices -l` marks a
+# genuine USB attachment with a `usb:` field; that is the only dependable sign.
+usb_serial() {
+  "${ADB}" devices -l \
+    | awk '$2=="device" && /[[:space:]]usb:/ && $1 !~ /^adb-/ && $1 !~ /_adb-tls-connect/ {print $1; exit}'
+}
+
 connect_device() {
   if [ -z "${DEV_HOST}" ]; then
-    # USB-only device: find it among the plugged-in serials.
-    TARGET="$("${ADB}" devices | awk '$2=="device" && $1 !~ /:/ {print $1; exit}')"
+    # USB-only device: find it among the plugged-in serials. Matched on the
+    # `usb:` field rather than "the serial has no colon", because wireless
+    # debugging advertises itself over mDNS as adb-XXXX._adb-tls-connect._tcp,
+    # which has no colon either and is emphatically not a cable.
+    TARGET="$(usb_serial)"
     if [ -z "${TARGET}" ]; then
       echo "❌ ${DEV_NAME} has no host configured and nothing is plugged in over USB." >&2
       exit 1
@@ -352,7 +362,7 @@ add_device() {
 
   echo "Looking for a device plugged in over USB…"
   local serial
-  serial="$("${ADB}" devices | awk '$2=="device" && $1 !~ /:/ {print $1; exit}')"
+  serial="$(usb_serial)"
   if [ -z "${serial}" ]; then
     cat >&2 <<EOF
 ❌ No USB device found.
@@ -584,7 +594,14 @@ if [ "${AUDIO}" = "on" ]; then
     AUDIO_PID=$!
   fi
   echo "${AUDIO_PID}" > "$(audio_pidfile "${DEV_ID}")"
-  notify_hush_button
+  # Only tell the phone once the stream is genuinely up. Announcing it the
+  # instant the process is spawned means a session that dies on startup — a
+  # sleeping screen is enough — still leaves a notification on the phone whose
+  # button refers to something that no longer exists.
+  sleep 3
+  if kill -0 "${AUDIO_PID}" 2>/dev/null; then
+    notify_hush_button
+  fi
   echo "Audio -> Mac. 'mirror ${DEV_ID} hush' hands it back."
 fi
 
@@ -595,7 +612,10 @@ cleanup() {
   local pidfile; pidfile="$(audio_pidfile "${DEV_ID}")"
   [ "$(cat "${pidfile}" 2>/dev/null)" = "${AUDIO_PID}" ] && rm -f "${pidfile}" || true
 }
-trap cleanup INT TERM
+# EXIT as well as INT/TERM: a session that fails during startup must still take
+# its audio stream down with it, or the sound keeps playing to a Mac with no
+# mirror left on screen.
+trap cleanup INT TERM EXIT
 
 # Keep the device usable if it locks itself mid-session — but at most once per
 # lock, not once every tick.
