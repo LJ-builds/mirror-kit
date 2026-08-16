@@ -12,16 +12,8 @@ import AppKit
 /// screen while typing. (A truly windowless version is scrcpy's OTG mode, which
 /// is USB-only.)
 struct KeyboardOnly {
-    /// Unique to this session type; the mirror never passes --no-video.
-    static let marker = "--no-video"
-
     static func isRunning(_ device: Device) -> Bool {
-        for serial in Mirror.knownSerials(device) {
-            let (status, _) = Shell.run("/usr/bin/pgrep",
-                                        ["-f", "scrcpy -s \(serial) \(marker)"])
-            if status == 0 { return true }
-        }
-        return false
+        !Mirror.pids(device, .keyboard).isEmpty
     }
 
     static func start(_ device: Device) {
@@ -30,9 +22,11 @@ struct KeyboardOnly {
             return
         }
         Shell.log("starting \(device.id) keyboard-only session")
+        // `--no-video --no-audio` together are what mark this out from the other
+        // two session kinds; see Mirror.Session. Neither is incidental.
         Shell.launchDetached(Config.scrcpy, [
             "-s", link.serial,
-            marker,
+            "--no-video",
             "--no-audio",
             "--force-adb-forward",
             "--keyboard=uhid",
@@ -44,9 +38,7 @@ struct KeyboardOnly {
     }
 
     static func stop(_ device: Device) {
-        for serial in Mirror.knownSerials(device) {
-            Shell.run("/usr/bin/pkill", ["-f", "scrcpy -s \(serial) \(marker)"])
-        }
+        Mirror.terminate(Mirror.pids(device, .keyboard))
         Shell.log("\(device.id) keyboard-only session stopped")
     }
 }

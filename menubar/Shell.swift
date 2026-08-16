@@ -42,17 +42,25 @@ struct Shell {
         return (task.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
+    /// A handle on the log, opened O_APPEND so every write lands at the end
+    /// atomically. That matters because the file has three writers at once: this
+    /// app, every detached scrcpy whose output is redirected here, and launchd,
+    /// which points the agent's stdout and stderr at the same path. Seeking to
+    /// the end first — as this used to — races all three and silently overwrites
+    /// whatever another writer put there in between.
+    private static func appendHandle() -> FileHandle? {
+        let fd = open(Config.logPath, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+        guard fd >= 0 else { return nil }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
+
     /// Launches a detached process and returns immediately, appending output to the log.
     static func launchDetached(_ launchPath: String, _ args: [String]) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: launchPath)
         task.arguments = args
         task.environment = childEnvironment
-        if !FileManager.default.fileExists(atPath: Config.logPath) {
-            FileManager.default.createFile(atPath: Config.logPath, contents: nil)
-        }
-        if let handle = FileHandle(forWritingAtPath: Config.logPath) {
-            handle.seekToEndOfFile()
+        if let handle = appendHandle() {
             task.standardOutput = handle
             task.standardError = handle
         }
@@ -67,13 +75,8 @@ struct Shell {
 
     static func log(_ message: String) {
         let line = "=== \(Date()) \(message) ===\n"
-        if !FileManager.default.fileExists(atPath: Config.logPath) {
-            FileManager.default.createFile(atPath: Config.logPath, contents: nil)
-        }
-        if let handle = FileHandle(forWritingAtPath: Config.logPath) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8)!)
-            try? handle.close()
-        }
+        guard let data = line.data(using: .utf8), let handle = appendHandle() else { return }
+        handle.write(data)
+        try? handle.close()
     }
 }

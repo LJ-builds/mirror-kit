@@ -10,23 +10,23 @@ extension AppDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Pick up devices added by `mirror add` while this app was running.
-        Device.reload()
+        // Pick up devices added by `mirror add` while this app was running — and
+        // give anything new its preference defaults, which are registered from
+        // the device list and would otherwise only ever cover the devices that
+        // existed at launch. Without this a phone added mid-session comes up
+        // with every option false, which is not the default it was meant to get
+        // but the absence of one.
+        if Device.reload() { Prefs.registerDefaults() }
 
-        // Nothing configured yet — a fresh install. Offer the one thing that
-        // helps instead of an empty menu with dead controls.
+        // Nothing configured yet — a fresh install. This used to be four dead
+        // rows telling the reader to go and run a terminal command; now it is
+        // the button that does it.
         if Device.all.isEmpty {
-            let title = NSMenuItem(title: "No devices configured",
+            let title = NSMenuItem(title: "No devices set up yet",
                                    action: nil, keyEquivalent: "")
             title.isEnabled = false
             menu.addItem(title)
-            for line in ["    1. Plug the device in over USB",
-                         "    2. Enable USB debugging on it",
-                         "    3. Run  mirror add  in Terminal"] {
-                let hint = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-                hint.isEnabled = false
-                menu.addItem(hint)
-            }
+            menu.addItem(item("Set Up a Device…", #selector(openOnboarding), ""))
             menu.addItem(.separator())
             menu.addItem(item("Open Log", #selector(openLog), ""))
             menu.addItem(item("Quit", #selector(quit), "q"))
@@ -80,6 +80,14 @@ extension AppDelegate {
                                       #selector(unlockNow), "u"))
                 }
                 menu.addItem(item("Stop Mirror", #selector(stopMirror), "s"))
+                // Only while sound is actually being forwarded. Offering to stop
+                // something that is not running is a line spent on nothing.
+                if streamingAudio[device.id] ?? false {
+                    let hush = item("Hand Sound Back to \(device.menuName)",
+                                    #selector(toggleAudio), "h")
+                    hush.keyEquivalentModifierMask = [.command, .shift]
+                    menu.addItem(hush)
+                }
             case .ready, .unreachable:
                 menu.addItem(item("Start Mirror", #selector(startMirror), "m"))
                 // Offered only where it works. On a phone whose capture dies with
@@ -88,6 +96,18 @@ extension AppDelegate {
                 if !device.screenOffBreaksCapture && !Prefs.deviceCursor(device) {
                     menu.addItem(item("Start with Device Screen Off",
                                       #selector(startMirrorScreenOff), ""))
+                }
+                // Needs a size to open at, so it appears only for a device that
+                // has one configured — guessing it would give a mirror of the
+                // wrong shape. This is the CLI's `big`.
+                if device.supportsVirtualDisplay {
+                    menu.addItem(item("Start on a Separate Screen",
+                                      #selector(startMirrorVirtual), ""))
+                    let hint = NSMenuItem(
+                        title: "    works folded shut or locked; leaves the real screen alone",
+                        action: nil, keyEquivalent: "")
+                    hint.isEnabled = false
+                    menu.addItem(hint)
                 }
             }
 
@@ -115,6 +135,10 @@ extension AppDelegate {
         menu.addItem(inputMenuItem(device))
 
         menu.addItem(.separator())
+        menu.addItem(item("Add Another Device…", #selector(openOnboarding), ""))
+        let login = item("Start at Login", #selector(toggleLoginItem), "")
+        login.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(login)
         menu.addItem(aboutMenuItem())
         menu.addItem(item("Open Log", #selector(openLog), ""))
         menu.addItem(item("Quit", #selector(quit), "q"))
@@ -161,16 +185,24 @@ extension AppDelegate {
         // picture being buffered by the same amount — otherwise it simply plays
         // late — so enabling audio slows the video down to meet it. That is a
         // real change in how the mirror feels, and it should not be a surprise.
+        let streaming = Prefs.streamAudio(device)
         let audio = item("Stream Device Audio  (adds ~0.12s, keeps it in sync)",
                          #selector(toggleAudio), "")
-        audio.state = Prefs.streamAudio(device) ? .on : .off
+        audio.state = streaming ? .on : .off
         sub.addItem(audio)
-        if Prefs.streamAudio(device) && !Prefs.watchMode(device) {
-            let hint = NSMenuItem(
-                title: "    picture is held back to match the sound",
-                action: nil, keyEquivalent: "")
-            hint.isEnabled = false
-            sub.addItem(hint)
+        // The two directions cost different things, and it is the same item both
+        // times, so which one is about to be paid is worth saying.
+        let audioHint = streaming
+            ? "    turning it off is instant; the picture keeps running"
+            : "    turning it on relaunches the picture to match the buffer"
+        let hint = NSMenuItem(title: audioHint, action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        sub.addItem(hint)
+        if streaming && !Prefs.watchMode(device) {
+            let cost = NSMenuItem(title: "    picture is held back to match the sound",
+                                  action: nil, keyEquivalent: "")
+            cost.isEnabled = false
+            sub.addItem(cost)
         }
 
         let watch = item("Watch Mode — buffered, adds ~0.5s lag",

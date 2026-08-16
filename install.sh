@@ -89,6 +89,9 @@ else
   rm -rf "$APP"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   cp "$BUILD_TMP/mirror-menubar" "$APP/Contents/MacOS/mirror-menubar"
+  # A copy of the CLI inside the bundle, so the setup window can offer to put it
+  # on the PATH without needing this checkout to still exist.
+  install -m 755 "$HERE/mirror" "$APP/Contents/Resources/mirror"
   ICON="/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/com.apple.iphone.icns"
   [ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
@@ -100,8 +103,8 @@ else
 	<key>CFBundleName</key><string>Android Mirror</string>
 	<key>CFBundleDisplayName</key><string>Android Mirror</string>
 	<key>CFBundleIdentifier</key><string>$LABEL</string>
-	<key>CFBundleVersion</key><string>4.0.0</string>
-	<key>CFBundleShortVersionString</key><string>4.0</string>
+	<key>CFBundleVersion</key><string>5.0.0</string>
+	<key>CFBundleShortVersionString</key><string>5.0.0</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleExecutable</key><string>mirror-menubar</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>

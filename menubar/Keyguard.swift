@@ -22,6 +22,11 @@ struct Keyguard {
         /// Woken and dismissed, but the PIN prompt never showed up in time.
         case promptNeverAppeared
         case pinRejected
+        /// The device is configured `unlockStyle: none`, so nothing was tried.
+        /// Reaching this is a bug in the caller — the UI that leads here is not
+        /// offered for such a device — but it fails silently rather than waking
+        /// a phone whose owner asked for exactly the opposite.
+        case notOurs
     }
 
     static func isLocked(_ serial: String) -> Bool {
@@ -38,8 +43,12 @@ struct Keyguard {
 
     /// True while the phone thinks it's covered. Checked before and after the
     /// keyguard poke, since the guard can appear as a result of the wake.
-    static func isPocketGuarded(_ serial: String) -> Bool {
-        focusedWindow(serial).contains("UnintentionalLcdOn")
+    ///
+    /// Only One UI has the window this looks for, so anything else is answered
+    /// without an adb round trip that could only ever come back false.
+    static func isPocketGuarded(_ device: Device, _ serial: String) -> Bool {
+        guard device.hasPocketGuard else { return false }
+        return focusedWindow(serial).contains("UnintentionalLcdOn")
     }
 
     /// The device counts a wrong PIN; zero attempts means our keystrokes never
@@ -98,19 +107,25 @@ struct Keyguard {
 
     /// Runs the whole unlock with a PIN the user just typed. The PIN is never
     /// written anywhere — it lives only in this call.
-    static func unlock(serial: String, pin: String) -> Result {
-        if isPocketGuarded(serial) { return .coveredByPocketGuard }
+    ///
+    /// Refuses outright for `unlockStyle: none`: that setting means the lock
+    /// screen is the user's business, and honouring it only at the call sites
+    /// would leave this one waking devices that asked to be left alone.
+    static func unlock(device: Device, serial: String, pin: String) -> Result {
+        guard device.handlesKeyguard else { return .notOurs }
+        if isPocketGuarded(device, serial) { return .coveredByPocketGuard }
         guard wakeAndDismiss(serial) else { return .unlocked }
-        if isPocketGuarded(serial) { return .coveredByPocketGuard }
+        if isPocketGuarded(device, serial) { return .coveredByPocketGuard }
         guard waitForPrompt(serial) else {
-            return isPocketGuarded(serial) ? .coveredByPocketGuard : .promptNeverAppeared
+            return isPocketGuarded(device, serial) ? .coveredByPocketGuard : .promptNeverAppeared
         }
         return enterPin(serial, pin) ? .unlocked : .pinRejected
     }
 
     /// Wake + dismiss only, for the case where no PIN is required at all.
     /// Returns true if that alone got the device unlocked.
-    static func tryUnlockWithoutPin(_ serial: String) -> Bool {
-        !wakeAndDismiss(serial)
+    static func tryUnlockWithoutPin(_ device: Device, _ serial: String) -> Bool {
+        guard device.handlesKeyguard else { return false }
+        return !wakeAndDismiss(serial)
     }
 }

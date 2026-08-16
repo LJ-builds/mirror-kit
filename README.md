@@ -45,69 +45,51 @@ but be aware I cannot reproduce it, so please include what `mirror <id>` printed
 
 ## Install
 
-Installing is done in a terminal, and the setup script asks the questions rather
-than leaving you to read documentation first. A proper welcome window is what I
-would like to build next; until then this is the way in, and it walks you
-through it.
+```bash
+brew tap lj-builds/tap
+brew install mirror-kit
+open "$(brew --prefix)/opt/mirror-kit/Android Mirror.app"
+```
+
+That last line opens a setup window that does the rest. It finds your device,
+reads its address off the cable itself, and offers to start at login. There is
+nothing to type into a config file and nothing to look up.
 
 ### Before you start
 
-- **A Mac with Apple Silicon.** The `mirror` command works on Intel; the menu bar
-  app is not built there.
+- **A Mac with Apple Silicon.** The `mirror` command works on Intel too; the
+  menu bar app is not built there.
 - **[Homebrew](https://brew.sh).** If `brew --version` says "command not found",
   install it first and follow the two lines it prints at the end about adding it
   to your PATH — skipping those is why `brew` still seems missing afterwards.
 - **An Android device**, 8.0 or newer, and a USB cable for the first minute.
 
-Everything else — scrcpy, adb, the Xcode command line tools — the script offers
-to install for you.
+scrcpy comes with it. adb is one click inside the setup window — Homebrew ships
+adb only as a cask, and a formula is not allowed to depend on one, so the app
+installs it instead of leaving you a note about it.
 
-### 1. Get the code and run the setup
+### What the setup window does
 
-```bash
-git clone https://github.com/LJ-builds/mirror-kit.git
-cd mirror-kit
-bash setup.sh
-```
+Six short steps, and every one of them either finds its own answer or gives you
+the button that gets past it. Nothing sends you away to come back later.
 
-It runs in four steps and tells you which one it is on.
+1. **Tools** — shows scrcpy and adb with a tick or an Install button each. Skipped
+   entirely if both are already there, which after `brew install` is the usual case.
+2. **Device** — plug it in. The window watches the cable and tells the states
+   apart: nothing connected, connected but *waiting for you to tap "Allow USB
+   debugging?"* on the device, or found — in which case it names the model.
+3. **Name** — a short id for `mirror <id>`, prefilled from the model.
+4. **Reach** — same Wi-Fi, or [Tailscale](https://tailscale.com) so it works from
+   anywhere. **Both addresses are read off the device**, so there is nothing to
+   go and find in Settings.
+5. It switches the device to wireless debugging and writes the config.
+6. **Done** — start at login, and optionally the `mirror` terminal command.
 
-1. **Tools** — checks for scrcpy, adb and the Swift compiler, and offers to
-   install whatever is missing. If it installs Apple's command line tools, finish
-   Apple's own installer window and then run `bash setup.sh` again.
-2. **How this Mac reaches your device** — the one decision worth making. Answer
-   `a` for same-Wi-Fi-only, or `b` to use [Tailscale](https://tailscale.com) so it
-   also works when you are not home. You can change your mind later by editing one
-   address in the config.
-3. **Installing** — compiles the menu bar app on your machine and sets it to start
-   at login.
-4. **Your device** — the part that needs the cable, below.
+Then unplug the cable. It is not needed again.
 
-### 2. Turn on USB debugging
-
-On the device, once:
-
-- **Settings → About phone →** tap **Build number** seven times. It will tell you
-  you are now a developer.
-- **Settings → Developer options → USB debugging → on.**
-
-Then plug the device into the Mac and accept the **Allow USB debugging?** prompt
-that appears on its screen.
-
-Forgetting this is the single most common reason setup does not finish. If it
-happens, the script says so and offers to try again — nothing is lost.
-
-### 3. Add the device
-
-The setup script does this for you at the end. To do it later, or to add another
-device:
-
-```bash
-mirror add
-```
-
-It reads the device's own address off the cable, switches it to wireless
-debugging, and writes it down. Then unplug the cable — it is not needed again.
+**First time on this device?** Enable developer access once, before step 2:
+**Settings → About phone →** tap **Build number** seven times, then
+**Settings → Developer options → USB debugging → on.**
 
 ### That's it
 
@@ -116,16 +98,30 @@ mirror list          # what's configured
 mirror <id>          # mirror it
 ```
 
-Or use the phone icon that has appeared in your menu bar.
+Or use the phone icon in your menu bar. To add a second device later, use
+**Add Another Device…** in that menu, or run `mirror add`.
 
 ### Updating
 
 ```bash
-git pull && bash install.sh
+brew upgrade mirror-kit
 ```
 
-`install.sh` is the same work without the questions, and it leaves your device
-list alone.
+Your device list is untouched — it lives in `~/.config/mirror/`, not in the
+install.
+
+### Installing without Homebrew
+
+Cloning and building works too, and is what to use if you are changing the code:
+
+```bash
+git clone https://github.com/LJ-builds/mirror-kit.git
+cd mirror-kit
+bash setup.sh
+```
+
+`setup.sh` asks the same questions in a terminal; `install.sh` is the same work
+with no questions, safe to re-run, and leaves your device list alone.
 
 ### If something goes wrong
 
@@ -165,11 +161,21 @@ mirror <id> watch        mirror + sound, heavily buffered for watching video
 mirror <id> keys         no mirroring; Mac keyboard/trackpad act as USB hardware
 mirror <id> big          mirror a separate virtual screen, not the real one
 mirror <id> hush         stop only the audio, keep the mirror running
+
+mirror <id> frugal       800px / 4M — least data, for a metered or weak link
+mirror <id> medium       1024px / 6M — the default
+mirror <id> sharp        full resolution / 24M — detail over frames
 ```
 
-They compose: `mirror phone watch speaker` is a buffered mirror with sound on
-both ends. Anything else on the line is passed straight to `scrcpy`, so
+They compose: `mirror phone watch sharp` is a buffered, full-resolution mirror
+with sound. Anything else on the line is passed straight to `scrcpy`, so
 `mirror phone -f` is fullscreen.
+
+**The three quality words are the menu bar app's three levels**, with the same
+numbers, so a device does not look different depending on which one started it.
+A device plugged in over USB ignores them and gets the full-quality profile —
+there is bandwidth to spare and nothing to trade off. Over Wi-Fi the enemy is
+latency rather than bandwidth, which is why even `sharp` stays on H.264.
 
 **`keys` is the interesting one.** It registers a genuine USB keyboard on the
 device, so Android hands your keystrokes to the device's own input method —
@@ -180,6 +186,26 @@ for the Mac to forward what you type.
 **`hush` exists because scrcpy has no runtime audio switch.** Audio always runs
 as its own process, so stopping it hands the sound back to the device instantly
 without dropping the mirror or the connection.
+
+### From the menu bar
+
+The same things, with a mouse. Everything above has a menu item except `music`
+and `keys`' composability:
+
+| Menu | Same as |
+| --- | --- |
+| Start Mirror | `mirror <id>` |
+| Start with Device Screen Off | — (hidden where `screenOffBreaksCapture` is set) |
+| Start on a Separate Screen | `mirror <id> big` (only for a device with `virtualDisplay`) |
+| Keyboard Only | `mirror <id> keys` |
+| Hand Sound Back | `mirror <id> hush` |
+| Picture & Sound → the three levels | `frugal` / `medium` / `sharp` |
+| Picture & Sound → Watch Mode | `mirror <id> watch` |
+
+Sound is its own scrcpy process in both, so turning it **off** is instant and
+never disturbs the picture. Turning it **on** relaunches the picture, because
+audio and video have to be buffered by the same number of milliseconds or the
+sound simply arrives late — and that buffer is fixed when scrcpy starts.
 
 ---
 
@@ -198,6 +224,7 @@ The fields worth knowing about:
 | `unlockStyle` | `samsung` turns on One UI keyguard handling, `generic` does the basics, `none` never touches the lock screen |
 | `virtualDisplay` | Size/dpi for `big`, e.g. `2448x1848/420`. Omit and the mode is refused rather than guessed |
 | `screenOffBreaksCapture` | Set true if `--turn-screen-off` gives you a black mirror on this device |
+| `maxSize` | Pins the mirror's width, overriding whichever quality level is picked. Omit it — the levels are tuned per link and are the better default |
 
 ### Mirroring from outside the house
 
@@ -236,6 +263,17 @@ of request, leave the block out. Nothing breaks without it — it is skipped
 entirely, and `mirror <id> hush` still works from the Mac.
 
 ## Uninstall
+
+If you installed with Homebrew:
+
+```bash
+launchctl bootout gui/$(id -u)/com.mirrorkit.menubar
+rm -f ~/Library/LaunchAgents/com.mirrorkit.menubar.plist
+brew uninstall mirror-kit
+rm -rf ~/.config/mirror ~/.cache/mirror
+```
+
+If you installed from a clone:
 
 ```bash
 launchctl bootout gui/$(id -u)/com.mirrorkit.menubar
