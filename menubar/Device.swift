@@ -1,6 +1,22 @@
 import AppKit
 
 struct Device {
+    /// How much of the lock screen this device wants handled for it. The CLI has
+    /// always read this field; the app used to ignore it and unlock everything,
+    /// which meant a device configured `none` still got woken and asked for a PIN.
+    enum UnlockStyle: String {
+        /// One UI: the PIN bouncer plus Samsung's accidental-switch-on guard.
+        case samsung
+        /// Wake and dismiss, then type the PIN if one is demanded.
+        case generic
+        /// Never touch the lock screen. Nothing here wakes, dismisses or prompts.
+        case none
+
+        init(_ raw: String?) {
+            self = UnlockStyle(rawValue: raw?.lowercased() ?? "") ?? .generic
+        }
+    }
+
     let id: String                  // prefs namespace, stable across renames
     let menuName: String
     let host: String                // LAN or Tailscale address; "" = USB only
@@ -22,8 +38,28 @@ struct Device {
     let screenOffBreaksCapture: Bool
     /// Directory that files dropped on the mirror window are pushed into.
     let pushTarget: String
+    let unlockStyle: UnlockStyle
+    /// "WxH/dpi" for the separate virtual screen, e.g. "2448x1848/420". Empty
+    /// means the device has none configured, and the mode is not offered rather
+    /// than guessed at — a wrong size here is a mirror of the wrong shape.
+    let virtualDisplay: String
+    /// Overrides the quality tier's width for a device that wants a particular
+    /// one. nil — the usual case — leaves the choice to the tier, which is tuned
+    /// per link and is the better default.
+    let maxSize: Int?
 
     var target: String { "\(host):\(port)" }
+
+    /// False for `unlockStyle: none`, where nothing may wake the device, dismiss
+    /// its keyguard, or ask for a PIN.
+    var handlesKeyguard: Bool { unlockStyle != .none }
+
+    /// Samsung's accidental-switch-on guard is spotted by a window name only One
+    /// UI has, so the check is only meaningful there. Elsewhere it never matches,
+    /// and asking costs an adb round trip to learn nothing.
+    var hasPocketGuard: Bool { unlockStyle == .samsung }
+
+    var supportsVirtualDisplay: Bool { !virtualDisplay.isEmpty }
 
     /// Shown when nothing is configured yet, so every call site can keep
     /// assuming a device exists. It can never connect — the menu spots the
@@ -39,7 +75,10 @@ struct Device {
         mirroringSymbols: ["questionmark.circle"],
         supportsForceLandscape: false,
         screenOffBreaksCapture: false,
-        pushTarget: defaultPushTarget)
+        pushTarget: defaultPushTarget,
+        unlockStyle: .none,
+        virtualDisplay: "",
+        maxSize: nil)
 
     // MARK: Loading
 
@@ -77,7 +116,12 @@ struct Device {
                 : ["iphone.badge.play", "play.rectangle.fill", "iphone"],
             supportsForceLandscape: isTablet,
             screenOffBreaksCapture: entry["screenOffBreaksCapture"] as? Bool ?? false,
-            pushTarget: entry["pushTarget"] as? String ?? defaultPushTarget)
+            pushTarget: entry["pushTarget"] as? String ?? defaultPushTarget,
+            unlockStyle: UnlockStyle(entry["unlockStyle"] as? String),
+            virtualDisplay: entry["virtualDisplay"] as? String ?? "",
+            // Written as a number, but tolerate the string a hand-edited config
+            // is just as likely to hold.
+            maxSize: entry["maxSize"] as? Int ?? (entry["maxSize"] as? String).flatMap(Int.init))
     }
 
     /// Where files dropped onto the mirror window land. scrcpy's own default is
@@ -98,7 +142,17 @@ struct Device {
     /// menu bar app is running, and the menu is rebuilt on every open anyway.
     private(set) static var all: [Device] = load()
 
-    static func reload() { all = load() }
+    /// Returns true when the set of devices actually changed, so the caller can
+    /// register preference defaults for anything new. Without that, a device
+    /// added by `mirror add` mid-session comes up with every option false —
+    /// which is not the default it was meant to get, only the absence of one.
+    @discardableResult
+    static func reload() -> Bool {
+        let fresh = load()
+        let changed = fresh.map(\.id) != all.map(\.id)
+        all = fresh
+        return changed
+    }
 }
 
 /// Which device the menu is currently driving. Persisted so the app comes back

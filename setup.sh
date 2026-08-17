@@ -252,10 +252,11 @@ if yes_no "Ready to add it now?" "Y"; then
       break
     fi
     echo
-    say "The device was not added. Nine times out of ten that is USB debugging:"
-    say "  Settings -> About phone -> tap \"Build number\" seven times"
-    say "  Settings -> Developer options -> USB debugging -> ON"
-    say "then plug the cable in and accept the prompt on the device."
+    # No second diagnosis here. `mirror add` has just printed the specific one —
+    # nothing plugged in, or plugged in and waiting for "Allow USB debugging?" to
+    # be tapped — and repeating generic advice on top of it used to tell people
+    # to enable USB debugging they had already enabled.
+    say "Nothing was added. The message above says what to fix."
     echo
     if ! yes_no "Try again?" "Y"; then
       summary "Installed — no device yet"

@@ -20,9 +20,15 @@
     "virtualDisplay — size/dpi for `mirror <id> big`, which mirrors a separate",
     "         virtual screen instead of the real one. Use the panel's own",
     "         resolution, e.g. 2448x1848/420. Omit if you do not want the mode.",
+    "         The menu bar app offers it as 'Start on a Separate Screen'.",
     "unlockStyle — samsung | generic | none. 'samsung' enables the One UI keyguard",
     "         handling (PIN bouncer detection, the accidental-switch-on guard).",
-    "         'none' never touches the lock screen."
+    "         'none' never touches the lock screen — neither program wakes it,",
+    "         dismisses the keyguard, or asks for a PIN.",
+    "maxSize — pins the mirror's width, overriding whichever quality level is",
+    "         chosen (`frugal` / `medium` / `sharp`, or the menu's three). Omit",
+    "         it unless you need a particular width: the levels are tuned per",
+    "         link and make a better default than one number for every case."
   ],
 
   "devices": [

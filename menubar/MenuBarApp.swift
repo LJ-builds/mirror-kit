@@ -12,8 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var busy: Bool = false
     var busyLabel: String = ""
     /// Remembered per device so a restart triggered by an option toggle preserves
-    /// the mode the mirror was actually started in.
-    var lastScreenOff: [String: Bool] = [:]
+    /// the screen the mirror was actually started on — the physical panel, with
+    /// or without it lit, or the separate virtual one.
+    var lastScreen: [String: Mirror.Screen] = [:]
+    /// Devices whose sound is being forwarded right now. Polled rather than
+    /// assumed, because the audio stream is its own process and can end without
+    /// the menu having asked it to.
+    var streamingAudio: [String: Bool] = [:]
     /// Devices whose mirror is up but blacked out behind a PIN prompt.
     var lockedMidMirror: Set<String> = []
     /// Guards against the 6s poll stacking a new PIN dialog on every tick.
@@ -39,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // appear, this line is the difference between "the config is wrong" and
         // "the app is broken", and it is the first thing to ask them for.
         if Device.all.isEmpty {
-            Shell.log("no devices in \(Device.configPath) — run `mirror add`")
+            Shell.log("no devices in \(Device.configPath) — opening the setup window")
         } else {
             let summary = Device.all
                 .map { "\($0.id)=\($0.host.isEmpty ? "USB" : $0.target)" }
@@ -74,6 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         updateIcon()
         refreshState()
+
+        // A fresh install has nothing configured, and a menu bar icon with an
+        // empty menu is not an invitation. Open the way in instead — this is the
+        // first thing anyone sees after installing, so it should be the thing
+        // that sets them up rather than a note about where to go next.
+        if Device.all.isEmpty {
+            OnboardingWindow.shared.show()
+        }
 
         // Poll so the icon reflects reality even when the menu is closed.
         timer = Timer.scheduledTimer(withTimeInterval: 6.0, repeats: true) { [weak self] _ in
@@ -129,9 +142,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task.detached {
             var polled: [String: MirrorState] = [:]
             var keys: [String: Bool] = [:]
+            var sound: [String: Bool] = [:]
             for device in Device.all {
                 polled[device.id] = Mirror.currentState(device)
                 keys[device.id] = KeyboardOnly.isRunning(device)
+                sound[device.id] = Mirror.isStreamingAudio(device)
             }
 
             // A mirror that locks itself mid-session goes *black*, not to a
@@ -145,8 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // seconds later it happens again. `mScreenLocked` answers the
             // question without touching the device; waking is left to the moment
             // the user actually submits a PIN.
+            //
+            // A device configured `unlockStyle: none` is skipped entirely: its
+            // owner said the lock screen is not this app's business, and noticing
+            // it here is the first step of a path that ends in an unasked-for PIN
+            // dialog every six seconds.
             var lockedNow: [String] = []
-            for device in Device.all where polled[device.id] == .mirroring {
+            for device in Device.all
+            where polled[device.id] == .mirroring && device.handlesKeyguard {
                 if let link = Mirror.currentLink(device), Keyguard.isLocked(link.serial) {
                     lockedNow.append(device.id)
                 }
@@ -154,11 +175,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             let fresh = polled   // immutable copies: the closure below crosses actors
             let freshKeys = keys
+            let freshSound = sound
             let locked = Set(lockedNow)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.states = fresh
                 self.keyboardOnly = freshKeys
+                self.streamingAudio = freshSound
                 self.lockedMidMirror = locked
                 // Once a phone is unlocked again, forget that its prompt was
                 // dismissed, so the next genuine lock asks afresh.

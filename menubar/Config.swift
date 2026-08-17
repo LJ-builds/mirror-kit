@@ -1,8 +1,8 @@
-// Tab Mirror — menu bar control for scrcpy mirroring of Gary's Android devices
-// (Galaxy Tab S10 Ultra and Galaxy Z Fold 8) over Tailscale. Shows live
+// Android Mirror — menu bar control for scrcpy mirroring of the devices listed
+// in ~/.config/mirror/devices.json, over USB, LAN or Tailscale. Shows live
 // connection state and starts/stops the mirror.
 //
-// Build: ./build.sh   (produces /Applications/Tab Mirror.app)
+// Build: bash install.sh   (produces /Applications/Android Mirror.app)
 
 import AppKit
 
@@ -54,8 +54,12 @@ enum Config {
         return !fm.isExecutableFile(atPath: adb) || !fm.isExecutableFile(atPath: scrcpy)
     }
 
+    /// The same file the LaunchAgent redirects this app's stdout and stderr to,
+    /// so a bug report carries one log rather than half of one. It is the path
+    /// the README and CONTRIBUTING ask people for; changing it means changing
+    /// them, and the plist in install.sh, together.
     static var logPath: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/tab-mirror.log")
+        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/mirror-menubar.log")
     }
 }
 

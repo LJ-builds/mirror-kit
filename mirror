@@ -25,6 +25,12 @@
 #   <device> hush         stop only the audio stream of a running session — the
 #                         sound returns to the device, the mirror keeps running
 #
+# Picture quality (over Wi-Fi; USB always gets the full-quality profile):
+#   <device> frugal       800px / 4M — least data, for a metered or weak link
+#   <device> medium       1024px / 6M — the default, and what most links want
+#   <device> sharp        full resolution / 24M — detail over frames. Good on a
+#                         strong link, syrupy on a weak one
+#
 # Audio always runs as its own scrcpy process, which is what makes `hush`
 # possible: killing it releases Android's playback capture without touching the
 # video stream or the adb connection.
@@ -114,7 +120,9 @@ put("DEV_KIND", match.get("kind", "phone"))
 put("DEV_VDISPLAY", match.get("virtualDisplay", ""))
 put("DEV_UNLOCK", match.get("unlockStyle", "generic"))
 put("DEV_SCREEN_OFF_BREAKS", "1" if match.get("screenOffBreaksCapture") else "")
-put("DEV_MAXSIZE", match.get("maxSize", 1600))
+# Empty rather than a number: unset means "let the quality tier choose", and a
+# tier that has been tuned per link is a better default than one width for all.
+put("DEV_MAXSIZE", match.get("maxSize", ""))
 # Files dragged onto the mirror window land here. scrcpy's own default is the
 # device's Downloads folder, which is quickly indistinguishable from everything
 # the device downloaded itself, so they get their own subfolder.
@@ -231,6 +239,21 @@ usb_serial() {
     | awk '$2=="device" && /[[:space:]]usb:/ && $1 !~ /^adb-/ && $1 !~ /_adb-tls-connect/ {print $1; exit}'
 }
 
+# The serial of a device on a cable that has not authorised this Mac yet.
+#
+# A different problem from "nothing is plugged in", and the one people actually
+# hit: the device is connected and talking, and the "Allow USB debugging?"
+# prompt is sitting unanswered on its screen. Answering that with "enable USB
+# debugging" — which they just did — is the wrong instruction at the worst
+# possible moment, so it is worth the extra call to tell the two apart.
+#
+# Matched without the `usb:` field, which adb omits until the device is
+# authorised; a bare serial with no colon is cable enough here.
+usb_unauthorized() {
+  "${ADB}" devices -l \
+    | awk '$2=="unauthorized" && $1 !~ /:/ && $1 !~ /^adb-/ {print $1; exit}'
+}
+
 connect_device() {
   if [ -z "${DEV_HOST}" ]; then
     # USB-only device: find it among the plugged-in serials. Matched on the
@@ -335,6 +358,14 @@ unlock() {
     read -rs -p "Device PIN (used once, never stored): " pin </dev/tty
     echo >&2
     [ -z "${pin}" ] && { echo "No PIN given; can't unlock." >&2; return 1; }
+    # Only digits have a KEYCODE_n. One stray character would otherwise build a
+    # keycode name that does not exist, and `input keyevent` rejects the whole
+    # line — so the PIN would look wrong when it was the alphabet that was.
+    case "${pin}" in
+      *[!0-9]*)
+        echo "Only numeric PINs can be typed from here — unlock the device by hand." >&2
+        return 1 ;;
+    esac
     # Key events land in the secure field more reliably than 'input text'.
     local codes="" i=0
     while [ "${i}" -lt "${#pin}" ]; do
@@ -364,6 +395,17 @@ add_device() {
   local serial
   serial="$(usb_serial)"
   if [ -z "${serial}" ]; then
+    if [ -n "$(usb_unauthorized)" ]; then
+      cat >&2 <<EOF
+❌ The device is connected, but hasn't allowed this Mac yet.
+
+Look at its screen right now — it is asking "Allow USB debugging?".
+Tap Allow, and tick "Always allow from this computer" so it stops asking.
+
+Then run 'mirror add' again.
+EOF
+      exit 1
+    fi
     cat >&2 <<EOF
 ❌ No USB device found.
 
@@ -455,7 +497,10 @@ PY
 
 # ---------- argument parsing ----------------------------------------------
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+  # Everything from line 2 down to the first line that is not a comment. Reading
+  # it by shape rather than by line number is what stops `mirror help` printing
+  # shell source the moment the header above grows a paragraph.
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
   exit 0
 }
 
@@ -473,6 +518,7 @@ load_device "${DEVICE_ID}"
 MODE=auto
 AUDIO=off
 WATCH=off
+QUALITY=medium
 while :; do
   case "${1:-}" in
     big)          MODE=big; shift ;;
@@ -480,6 +526,9 @@ while :; do
     music)        MODE=music; AUDIO=on; shift ;;
     keys|kbd)     MODE=keys; shift ;;
     watch)        WATCH=on; AUDIO=on; shift ;;
+    frugal|data)  QUALITY=frugal; shift ;;
+    medium)       QUALITY=medium; shift ;;
+    sharp|crisp)  QUALITY=sharp; shift ;;
     hush|mute)
       if stop_audio "${DEV_ID}"; then
         echo "Audio stream stopped — sound is back on ${DEV_NAME}."
@@ -494,6 +543,34 @@ done
 ADB="${ADB:-$(find_tool adb android-platform-tools)}"
 SCRCPY="${SCRCPY:-$(find_tool scrcpy)}"
 
+# ---------- picture quality -------------------------------------------------
+# The same three tiers the menu bar app offers, with the same numbers, so one
+# device does not look different depending on which front door started it.
+#
+# Over Wi-Fi the enemy is latency, not bandwidth: H.265 costs real encode time on
+# the device, and every extra pixel is another frame's worth of delay. So the
+# wireless tiers stay on H.264 and spend the budget on frames instead. USB has
+# bandwidth to spare and nothing to trade off, so it ignores the tier entirely.
+#
+# "maxSize" in devices.json overrides the tier's width for a device that wants a
+# particular one; codec and bitrate still follow the tier.
+SIZE_ARGS=()
+CODEC_ARGS=()
+if [ -z "${DEV_HOST}" ]; then
+  SIZE_ARGS=(-m "${DEV_MAXSIZE:-1920}")
+  CODEC_ARGS=(--video-codec=h265 -b 16M)
+else
+  case "${QUALITY}" in
+    # -m 0 is scrcpy's "no limit": the full panel, no downscaling.
+    sharp)  SIZE_ARGS=(-m "${DEV_MAXSIZE:-0}")
+            CODEC_ARGS=(-b 24M) ;;
+    frugal) SIZE_ARGS=(-m "${DEV_MAXSIZE:-800}")
+            CODEC_ARGS=(--video-codec=h264 -b 4M --max-fps=60) ;;
+    *)      SIZE_ARGS=(-m "${DEV_MAXSIZE:-1024}")
+            CODEC_ARGS=(--video-codec=h264 -b 6M --max-fps=60) ;;
+  esac
+fi
+
 MODE_ARGS=()
 case "${MODE}" in
   big)
@@ -503,9 +580,12 @@ case "${MODE}" in
       exit 1
     fi
     DEV_TITLE="${DEV_TITLE} (virtual)"
+    # No -m: the virtual display's own "WxH/dpi" already fixes the size, and a
+    # second limit on top of it would only downscale what was asked for.
     MODE_ARGS=(
       "--new-display=${DEV_VDISPLAY}"
       --no-vd-destroy-content   # leave apps running there when the window closes
+      "${CODEC_ARGS[@]}"
     )
     ;;
   music)
@@ -520,7 +600,7 @@ case "${MODE}" in
     MODE_ARGS=(--no-video --keyboard=uhid --mouse=uhid)
     ;;
   auto)
-    MODE_ARGS=(-m "${DEV_MAXSIZE}" --stay-awake)
+    MODE_ARGS=("${SIZE_ARGS[@]}" "${CODEC_ARGS[@]}" --stay-awake)
     ;;
 esac
 
