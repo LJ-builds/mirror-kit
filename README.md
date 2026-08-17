@@ -65,6 +65,11 @@ do not want the same settings. Sound is a separate switch, and Watch Mode
 buffers both streams half a second for video, where smoothness matters and
 latency does not.
 
+<img src="docs/menu.png" width="700" alt="The menu bar menu: two devices listed at the top with their state, then Start Mirror and Keyboard Only, and an open Picture and Sound submenu showing three quality tiers, Stream Device Audio and Watch Mode">
+
+Both devices are listed whichever one you are driving, and the current quality
+is on the parent row so you can see it without opening anything.
+
 **Drag a file onto the window** to push it to the phone; drop an APK and it
 installs. That is scrcpy's own feature, not mine — all I changed is where things
 land. scrcpy drops them in the device's Downloads folder, where they are
