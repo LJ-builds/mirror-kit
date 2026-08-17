@@ -77,9 +77,20 @@ but be aware I cannot reproduce it, so please include what `mirror <id>` printed
 
 ```bash
 brew tap lj-builds/tap
+brew trust lj-builds/tap
 brew install mirror-kit
 open "$(brew --prefix)/opt/mirror-kit/Android Mirror.app"
 ```
+
+`brew trust` is not optional and not something I can spare you: Homebrew
+refuses to load a formula from a third-party tap until you say you trust it.
+Read [the formula](https://github.com/LJ-builds/homebrew-tap/blob/main/Formula/mirror-kit.rb)
+first if you like — it is 100 lines and it builds this repo, nothing else.
+
+This route compiles on your machine, so Homebrew insists your Xcode command
+line tools match your macOS version, and stops with "Your Xcode is too
+outdated" if they do not. Updating them fixes it; so does the clone route
+below, which uses `swiftc` directly and does not care.
 
 That last line opens a setup window that does the rest. It finds your device,
 reads its address off the cable itself, and offers to start at login. There is

@@ -12,7 +12,7 @@ class MirrorKit < Formula
   desc "Mirror an Android phone or tablet on your Mac, with keyboard, trackpad and sound"
   homepage "https://github.com/LJ-builds/mirror-kit"
   url "https://github.com/LJ-builds/mirror-kit/archive/refs/tags/v5.0.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "e4511528076b557044a5521168a6a24409c52f4ad823ce299072336dd0ce9014"
   license "Apache-2.0"
   head "https://github.com/LJ-builds/mirror-kit.git", branch: "main"
 
