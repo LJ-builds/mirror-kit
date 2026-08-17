@@ -147,7 +147,15 @@ nothing to type into a config file and nothing to look up.
 `brew trust` is in there because Homebrew will not load a formula from a
 third-party tap until you say you trust it. Read
 [the formula](https://github.com/LJ-builds/homebrew-tap/blob/main/Formula/mirror-kit.rb)
-first if you like — it is 100 lines and it builds this repo, nothing else.
+first if you like — it is 100 lines and it builds this repo, nothing else. It is
+a decision worth making yourself: the point of that command is that somebody
+looked.
+
+**If you have asked an assistant to install this for you**, it can run all four
+commands and open the window, and then it is done — adding the device needs a
+cable physically plugged in and a prompt tapped on the phone's own screen, and
+nothing running on the Mac can do either. Expect to be handed a window that is
+waiting for you, and treat that as the install having worked.
 
 ### Before you start
 
