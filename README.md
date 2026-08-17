@@ -24,11 +24,24 @@ hands in shot are on the Mac.
 screen the moment you unfold it, no reconnecting. (That one is a foldable
 thing; on a normal phone there is only ever one screen to show.)
 
+<img src="docs/fold-switch.png" width="760" alt="The same mirror window a minute apart: narrow and tall showing the cover screen, then wide showing the unfolded inner screen">
+
+Same window, one minute apart. Nothing was restarted in between — the phone
+was opened.
+
 **Hear it through the Mac.** The phone's audio arrives on your speakers and the
 phone itself goes quiet, so it is not playing to an empty room.
 
 **Reach it from somewhere else.** Over [Tailscale](https://tailscale.com) the
 phone does not have to be on your Wi-Fi — or in your house.
+
+**Get past the lockscreen without typing blind.** A locked phone shows the
+mirror a black rectangle, not a PIN pad — Android marks the PIN prompt as a
+secure window and refuses to let it be captured, so there is nothing on screen
+to aim at. The PIN is asked for on the Mac instead and typed on the device for
+you. It is used once and never written down.
+
+<img src="docs/unlock-prompt.png" width="300" alt="A macOS dialog reading 'Unlock the Galaxy Z Fold 8', with a PIN field and an Unlock & Mirror button">
 
 **Drag a file onto the window** to push it to the phone. Drop an APK and it
 installs.
