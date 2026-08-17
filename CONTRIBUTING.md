@@ -148,6 +148,23 @@ sidesteps that completely. If you ever switch to shipping a binary, you are
 signing up for an Apple Developer account and notarisation in the same move —
 there is no half-way.
 
+**A double-clickable installer .app has been tried, and it does not work.** The
+tempting shortcut is to ship a small app that runs `setup.sh`, so nobody has to
+open a terminal. Measured with `spctl -a -vv` on a bundle carrying a download's
+quarantine attribute:
+
+| | verdict |
+|---|---|
+| unsigned, no quarantine (built locally) | `rejected — no usable signature` |
+| unsigned, quarantined (downloaded) | `rejected` |
+| **ad-hoc signed, quarantined** | **`rejected`** |
+
+The third row is the one that matters. Ad-hoc signing is what lets the menu bar
+app avoid Gatekeeper today, and it does nothing here — that app is fine because
+it is compiled on the user's machine and never downloaded, not because the
+signature carries weight. Anything downloaded needs a real Developer ID and
+notarisation, and there is no way around it worth finding.
+
 **Homebrew's `install` moves what you give it.** `bin.install "mirror"` therefore
 has to come *after* the app bundle takes its own copy of that script, or the
 build fails on a missing file. It is the last line of `install` for that reason.
