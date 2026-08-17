@@ -5,6 +5,36 @@ click, the keyboard and trackpad acting as real hardware on the device, and the
 sound coming out of your Mac speakers. Like iPhone Mirroring, except it works
 with Android, and over the internet if you want it to.
 
+## What you can actually do with it
+
+**Use the phone without touching it.** Its screen is a window on the Mac, and
+your trackpad and keyboard drive it.
+
+**Type on the phone with no mirror at all.** The Mac keyboard registers on the
+device as real USB hardware, so the phone's own keyboard and IME handle it —
+Chinese included, which the ordinary mode cannot do. You look at the phone and
+type on the Mac, with nothing on your screen at all.
+
+<img src="docs/keyboard-only.gif" width="320" alt="Typing on a Mac keyboard while the text appears on a Galaxy Z Fold 8 standing next to it, the phone's own suggestion bar reacting to each keystroke">
+
+That is the phone's own suggestion strip reacting, not a mirror of one — the
+hands in shot are on the Mac.
+
+**Open the phone and the mirror follows.** Cover screen while it is shut, inner
+screen the moment you unfold it, no reconnecting. (That one is a foldable
+thing; on a normal phone there is only ever one screen to show.)
+
+**Hear it through the Mac.** The phone's audio arrives on your speakers and the
+phone itself goes quiet, so it is not playing to an empty room.
+
+**Reach it from somewhere else.** Over [Tailscale](https://tailscale.com) the
+phone does not have to be on your Wi-Fi — or in your house.
+
+**Drag a file onto the window** to push it to the phone. Drop an APK and it
+installs.
+
+---
+
 Two pieces, both optional on their own:
 
 - **`mirror`** — the command line. `mirror phone`, `mirror phone sound`, etc.
