@@ -79,15 +79,17 @@ them somewhere else.
 
 ### What it is not for
 
-**Games.** Anything where a late frame loses you the round is the wrong use of
-this. Every frame is captured on the phone, encoded, sent over a network,
-decoded and drawn — that is tens of milliseconds on a good link, and this thing
-is tuned to survive a bad one rather than to shave the last millisecond off a
-good one. Watch Mode makes it deliberately worse, half a second of buffer, for
-video where you are not touching anything.
+**Games where reflexes decide it.** Shooters, racing, rhythm games, anything
+where a late frame loses you the round — the wrong use of this. Every frame is
+captured on the phone, encoded, sent over a network, decoded and drawn, which is
+tens of milliseconds on a good link. This is tuned to survive a bad link, not to
+shave the last millisecond off a good one.
 
-It is built for using a phone: messages, apps, typing, watching something,
-moving files. Not for playing on one.
+Turn-based games are fine. Strategy, tactics, card games, anything you would
+happily play while thinking about it — a tenth of a second between clicking and
+seeing does not matter when the game is waiting for you anyway. Just leave Watch
+Mode off, since half a second of buffer is worth it for video and not for
+something you are touching.
 
 ---
 
