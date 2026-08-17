@@ -95,19 +95,14 @@ brew install mirror-kit
 open "$(brew --prefix)/opt/mirror-kit/Android Mirror.app"
 ```
 
-`brew trust` is not optional and not something I can spare you: Homebrew
-refuses to load a formula from a third-party tap until you say you trust it.
-Read [the formula](https://github.com/LJ-builds/homebrew-tap/blob/main/Formula/mirror-kit.rb)
-first if you like — it is 100 lines and it builds this repo, nothing else.
-
-This route compiles on your machine, so Homebrew insists your Xcode command
-line tools match your macOS version, and stops with "Your Xcode is too
-outdated" if they do not. Updating them fixes it; so does the clone route
-below, which uses `swiftc` directly and does not care.
-
 That last line opens a setup window that does the rest. It finds your device,
 reads its address off the cable itself, and offers to start at login. There is
 nothing to type into a config file and nothing to look up.
+
+`brew trust` is in there because Homebrew will not load a formula from a
+third-party tap until you say you trust it. Read
+[the formula](https://github.com/LJ-builds/homebrew-tap/blob/main/Formula/mirror-kit.rb)
+first if you like — it is 100 lines and it builds this repo, nothing else.
 
 ### Before you start
 
@@ -179,6 +174,10 @@ with no questions, safe to re-run, and leaves your device list alone.
 
 ### If something goes wrong
 
+- **"Your Xcode is too outdated"** during `brew install` — the Homebrew route
+  compiles on your machine, and Homebrew will not start unless your developer
+  tools match your macOS version. `xcode-select --install` fixes it. So does the
+  clone route above, which calls `swiftc` directly and does not check.
 - **`command not found: brew`** — Homebrew is not installed, or not on your PATH.
   See "Before you start".
 - **`command not found: mirror`** — `~/bin` is not on your PATH. Add
