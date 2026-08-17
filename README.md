@@ -53,8 +53,36 @@ phone itself goes quiet, so it is not playing to an empty room.
 **Reach it from somewhere else.** Over [Tailscale](https://tailscale.com) the
 phone does not have to be on your Wi-Fi — or in your house.
 
-**Drag a file onto the window** to push it to the phone. Drop an APK and it
-installs.
+**Mirror more than one device at the same time.** Each has its own window, its
+own settings and its own start and stop — a phone and a tablet side by side, or
+two phones. They are listed at the top of the menu with what each is currently
+doing, and switching between them starts and stops nothing. (Apple's iPhone
+Mirroring does one device at a time.)
+
+**Pick what the picture costs.** Three quality tiers — 800, 1024, or the panel's
+full resolution — because a phone across a jittery Wi-Fi link and one on a cable
+do not want the same settings. Sound is a separate switch, and Watch Mode
+buffers both streams half a second for video, where smoothness matters and
+latency does not.
+
+**Drag a file onto the window** to push it to the phone; drop an APK and it
+installs. That is scrcpy's own feature, not mine — all I changed is where things
+land. scrcpy drops them in the device's Downloads folder, where they are
+immediately indistinguishable from everything the phone downloaded itself, so
+here they go to `Download/FromMac/`. Set `pushTarget` per device if you want
+them somewhere else.
+
+### What it is not for
+
+**Games.** Anything where a late frame loses you the round is the wrong use of
+this. Every frame is captured on the phone, encoded, sent over a network,
+decoded and drawn — that is tens of milliseconds on a good link, and this thing
+is tuned to survive a bad one rather than to shave the last millisecond off a
+good one. Watch Mode makes it deliberately worse, half a second of buffer, for
+video where you are not touching anything.
+
+It is built for using a phone: messages, apps, typing, watching something,
+moving files. Not for playing on one.
 
 ---
 
