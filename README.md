@@ -5,43 +5,53 @@ click, the keyboard and trackpad acting as real hardware on the device, and the
 sound coming out of your Mac speakers. Like iPhone Mirroring, except it works
 with Android, and over the internet if you want it to.
 
-## What you can actually do with it
+<img src="docs/fold-switch.png" width="820" alt="The same mirror window a minute apart: narrow and tall showing the cover screen, then wide showing the unfolded inner screen">
+
+The same window a minute apart. Nothing was restarted in between — the phone was
+opened, and the mirror followed it from the cover screen to the inner one. (A
+foldable thing; on an ordinary phone there is only ever one screen to show.)
+
+## Two things it does that you would not expect
+
+### It asks for the PIN on the Mac, and never keeps it
+
+A locked phone gives the mirror a black rectangle rather than a lockscreen.
+Android marks the PIN prompt as a secure window and will not allow it to be
+captured, so there is genuinely nothing on screen to aim at — you would be
+typing blind at a black box.
+
+So the PIN is asked for here instead, and typed onto the device for you.
+
+<img src="docs/unlock-prompt.png" width="320" alt="A macOS dialog reading 'Unlock the Galaxy Z Fold 8', with a PIN field and an Unlock & Mirror button">
+
+**It is never saved — not to a file, not to the keychain, not anywhere.** It
+exists for the length of that one unlock and is asked for again the next time.
+That is a deliberate trade: remembering it would be more convenient, and it
+would also mean your phone's PIN sitting on a disk.
+
+### It can be your phone's keyboard with no mirror at all
+
+The Mac keyboard registers on the device as real USB hardware. The phone's own
+keyboard and IME handle it — so Chinese works, which the ordinary mirroring mode
+cannot do, because that one drops anything outside ASCII.
+
+Nothing appears on your Mac screen. You look at the phone and type on the Mac.
+
+<img src="docs/keyboard-only.gif" width="340" alt="Typing on a Mac keyboard while the text appears on a Galaxy Z Fold 8 standing next to it, the phone's own suggestion bar reacting to each keystroke">
+
+That is the phone's own suggestion strip reacting to each keystroke, not a
+picture of one — the hands in shot are on the Mac.
+
+## Everything else it does
 
 **Use the phone without touching it.** Its screen is a window on the Mac, and
 your trackpad and keyboard drive it.
-
-**Type on the phone with no mirror at all.** The Mac keyboard registers on the
-device as real USB hardware, so the phone's own keyboard and IME handle it —
-Chinese included, which the ordinary mode cannot do. You look at the phone and
-type on the Mac, with nothing on your screen at all.
-
-<img src="docs/keyboard-only.gif" width="320" alt="Typing on a Mac keyboard while the text appears on a Galaxy Z Fold 8 standing next to it, the phone's own suggestion bar reacting to each keystroke">
-
-That is the phone's own suggestion strip reacting, not a mirror of one — the
-hands in shot are on the Mac.
-
-**Open the phone and the mirror follows.** Cover screen while it is shut, inner
-screen the moment you unfold it, no reconnecting. (That one is a foldable
-thing; on a normal phone there is only ever one screen to show.)
-
-<img src="docs/fold-switch.png" width="760" alt="The same mirror window a minute apart: narrow and tall showing the cover screen, then wide showing the unfolded inner screen">
-
-Same window, one minute apart. Nothing was restarted in between — the phone
-was opened.
 
 **Hear it through the Mac.** The phone's audio arrives on your speakers and the
 phone itself goes quiet, so it is not playing to an empty room.
 
 **Reach it from somewhere else.** Over [Tailscale](https://tailscale.com) the
 phone does not have to be on your Wi-Fi — or in your house.
-
-**Get past the lockscreen without typing blind.** A locked phone shows the
-mirror a black rectangle, not a PIN pad — Android marks the PIN prompt as a
-secure window and refuses to let it be captured, so there is nothing on screen
-to aim at. The PIN is asked for on the Mac instead and typed on the device for
-you. It is used once and never written down.
-
-<img src="docs/unlock-prompt.png" width="300" alt="A macOS dialog reading 'Unlock the Galaxy Z Fold 8', with a PIN field and an Unlock & Mirror button">
 
 **Drag a file onto the window** to push it to the phone. Drop an APK and it
 installs.
