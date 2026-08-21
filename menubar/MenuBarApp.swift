@@ -94,8 +94,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Quitting has to take the streams down with it. scrcpy is launched
+    /// detached, so nothing here dies on its own — and the audio stream carries
+    /// `--no-window`, which leaves an orphaned one playing out of a Mac with no
+    /// mirror on screen and no menu left to stop it from.
+    ///
+    /// The picture goes too, rather than the sound alone: releasing the capture
+    /// hands playback straight back to the phone's own speaker, so stopping only
+    /// the audio would leave a video still running, now out loud in whatever
+    /// room the phone is in. A keyboard-only session is left alone — it has a
+    /// window of its own to close, and forwards nothing that can make a noise.
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        for device in Device.all where !Mirror.pids(device, .audio).isEmpty
+                                       || !Mirror.pids(device, .mirror).isEmpty {
+            Mirror.stop(device)
+        }
     }
 
     // MARK: State
