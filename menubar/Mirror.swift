@@ -65,6 +65,37 @@ struct Mirror {
         sessions(device).filter { $0.kind == kind }.map(\.pid)
     }
 
+    /// Whether the process that started this one is gone.
+    ///
+    /// scrcpy is launched detached, so anything this app starts is reparented to
+    /// launchd the moment the app itself dies. That is the tell: a session the
+    /// CLI started belongs to a `mirror` script that is still running and still
+    /// holds its own trap, while ppid 1 means whatever started this outlived
+    /// nothing and left it behind.
+    static func hasNoOwner(_ pid: Int32) -> Bool {
+        let (_, out) = Shell.run("/bin/ps", ["-o", "ppid=", "-p", "\(pid)"])
+        return Int32(out.trimmingCharacters(in: .whitespacesAndNewlines)) == 1
+    }
+
+    /// Clears up streams a previous run of this app left behind.
+    ///
+    /// Quitting takes its sessions with it, but a crash or a `kill -9` never
+    /// reaches that code, and the survivor is the audio stream: it has no window
+    /// and no menu bar icon, so it is a Mac playing a phone's sound with nothing
+    /// on screen to connect it to. Nobody finds that by looking; they reboot.
+    ///
+    /// Only audio is looked for. An orphaned mirror window is visible and can be
+    /// closed, and killing one at launch would be a surprise — but a device whose
+    /// sound is orphaned gets the full stop, because releasing the capture with
+    /// the picture still running would just move the noise to the phone.
+    static func sweepOrphans() {
+        for device in Device.all {
+            guard pids(device, .audio).contains(where: hasNoOwner) else { continue }
+            Shell.log("\(device.id) had an audio stream with no owner — stopping it")
+            stop(device)
+        }
+    }
+
     /// Plain SIGTERM, never SIGKILL: a killed scrcpy never sends the touch-up
     /// matching a gesture in flight, and Android then leaves that pointer down
     /// forever — after which every injected touch is rejected and the mirror

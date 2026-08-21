@@ -34,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// True while a mirror session is running that *we* unlocked — those devices
     /// get locked back when their mirror stops, and left alone otherwise.
     var autoUnlocked: [String: Bool] = [:]
+    /// Set when this instance is the loser of the duplicate-launch check below.
+    /// It quits immediately, and must do so without touching anything: the
+    /// sessions it can see belong to the instance that was already here, and
+    /// tearing them down on the way out would make a second launch stop the
+    /// first one's mirror.
+    var duplicateInstance = false
 
     var device: Device { Selection.current }
     var state: MirrorState { states[device.id] ?? .unreachable }
@@ -68,9 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .runningApplications(withBundleIdentifier: myBundleID)
             .filter { $0.processIdentifier != mine }
         if others.contains(where: { $0.processIdentifier < mine }) {
+            duplicateInstance = true
             NSApp.terminate(nil)
             return
         }
+
+        // Off the main thread: this shells out per device, and a stop that has
+        // to put a phone's volume back waits on adb.
+        Task.detached { Mirror.sweepOrphans() }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
@@ -106,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// window of its own to close, and forwards nothing that can make a noise.
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        guard !duplicateInstance else { return }
         for device in Device.all where !Mirror.pids(device, .audio).isEmpty
                                        || !Mirror.pids(device, .mirror).isEmpty {
             Mirror.stop(device)
